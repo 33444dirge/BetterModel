@@ -310,6 +310,7 @@ public final class EntityTrackerRegistry {
     }
 
     private void refreshPlayer() {
+        if (entity.dead()) return;
         entity.trackedBy()
             .map(p -> BetterModel.player(p.uuid()).orElse(null))
             .filter(Objects::nonNull)
