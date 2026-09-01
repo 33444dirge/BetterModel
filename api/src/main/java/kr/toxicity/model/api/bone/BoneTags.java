@@ -121,6 +121,16 @@ public enum BoneTags implements BoneTag {
      */
     PLAYER_LEFT_FORELEG(PlayerLimb.LEFT_FORELEG.getItemMapper(), "plfl"),
     /**
+     * Renders the tagged Blockbench group with the complete skin of the model profile.
+     * <p>
+     * The group geometry and UV coordinates are preserved while its texture pixels are
+     * populated at runtime from the player's skin. This tag is intended for a group
+     * whose direct cubes use the model's player-skin texture.
+     *
+     * @since 3.2.1
+     */
+    PLAYER_SKIN("pskin"),
+    /**
      * Cape
      */
     CAPE(new BoneItemMapper() {

@@ -31,6 +31,7 @@ import java.net.http.HttpResponse
 import java.util.*
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
 import javax.imageio.ImageIO
 
 object SkinManagerImpl : SkinManager, GlobalManager {
@@ -41,6 +42,15 @@ object SkinManagerImpl : SkinManager, GlobalManager {
         CONFIG.namespace(),
         "player_limb"
     )
+    private val customModels = ConcurrentHashMap<String, UVModel>()
+
+    fun registerCustomModel(identifier: String, model: UVModel) {
+        customModels[identifier] = model
+    }
+
+    fun clearCustomModels() {
+        customModels.clear()
+    }
 
     private val HEAD = UVModel(
         { uvNamespace },
@@ -769,8 +779,11 @@ object SkinManagerImpl : SkinManager, GlobalManager {
         private val rightForeLeg: SkinModelData,
         private val leftForeArm: TransformedItemStack,
         private val rightForeArm: TransformedItemStack,
-        private val cape: TransformedItemStack?
+        private val cape: TransformedItemStack?,
+        private val skinImage: BufferedImage
     ) : SkinData {
+
+        private val customData = ConcurrentHashMap<String, SkinModelData>()
 
         constructor(
             profile: ModelProfile,
@@ -790,9 +803,13 @@ object SkinManagerImpl : SkinManager, GlobalManager {
             RIGHT_FORELEG.asModelData(skinImage),
             (if (profile.skin().slim) SLIM_LEFT_FOREARM else LEFT_FOREARM).asModelData(skinImage).asItem(),
             (if (profile.skin().slim) SLIM_RIGHT_FOREARM else RIGHT_FOREARM).asModelData(skinImage).asItem(),
-            capeImage?.let { CAPE.asModelData(it).asItem() }
+            capeImage?.let { CAPE.asModelData(it).asItem() },
+            skinImage
         )
         override fun profile(): ModelProfile = profile
+        override fun customModel(identifier: String): TransformedItemStack = customModels[identifier]?.let { model ->
+            customData.computeIfAbsent(identifier) { model.asModelData(skinImage) }.asItem()
+        } ?: TransformedItemStack.empty()
         override fun head(armor: PlayerArmor): TransformedItemStack = head.asItem(ArmorResource.HELMET, armor.helmet())
         override fun hip(armor: PlayerArmor): TransformedItemStack = hip.asItem(ArmorResource.HIP, armor.leggings())
         override fun waist(armor: PlayerArmor): TransformedItemStack = waist.asItem(ArmorResource.WAIST, armor.chestplate())
