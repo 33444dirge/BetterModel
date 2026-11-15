@@ -12,4 +12,5 @@ dependencies {
     compileOnly(libs.cloud.core)
     testImplementation(libs.gson)
     testImplementation(libs.adventure.api)
+    testRuntimeOnly(libs.armormodel)
 }
