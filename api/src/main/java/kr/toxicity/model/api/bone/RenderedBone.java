@@ -70,6 +70,7 @@ public final class RenderedBone implements BoneEventHandler {
     @Getter
     final RenderedBone parent;
     private volatile RenderedBone transformParent;
+    private volatile boolean continuousTransforms;
     final RenderedBone[] children;
 
     private volatile SequencedSet<RenderedBone> flattenBones;
@@ -106,9 +107,7 @@ public final class RenderedBone implements BoneEventHandler {
     private FloatSupplier scale = FloatConstantSupplier.ONE;
 
     private Function<Vector3f, Vector3f> positionModifier = p -> p;
-    private Vector3f lastModifiedPosition = new Vector3f();
     private Function<Quaternionf, Quaternionf> localRotModifier = r -> r, globalRotModifier = r -> r;
-    private Quaternionf lastModifiedLocalRot = new Quaternionf(), lastModifiedGlobalRot = new Quaternionf();
 
     /**
      * Creates entity.
@@ -150,6 +149,7 @@ public final class RenderedBone implements BoneEventHandler {
     /**
      * Changes the animation parent while retaining the model's stable traversal tree.
      * Both bones must belong to the same model; cycles are rejected.
+     * Connected transform trees share per-tick pose sampling when either tree has modifiers.
      * Example: {@code child.changeParent(tracker.bone("left_arm_death"));}
      *
      * @param newParent the new animation parent
@@ -163,6 +163,10 @@ public final class RenderedBone implements BoneEventHandler {
                 if (ancestor == this) return false;
             }
             transformParent = newParent;
+            if (continuousTransforms() || newParent.continuousTransforms()) {
+                enableContinuousTransforms();
+                newParent.enableContinuousTransforms();
+            }
             defaultFrame.position().set(group.getPosition()).sub(newParent.group.getPosition());
             globalState.updateAfter.set(true);
             globalState.updateCurrent.set(true);
@@ -314,13 +318,17 @@ public final class RenderedBone implements BoneEventHandler {
 
     /**
      * Adds local rot modifier.
+     * The model tree samples its animated pose and modifiers together on tracker ticks.
+     * Example: {@code bone.addLocalRotModifier(b -> true, q -> q.rotateY(yaw));}
      * @param predicate predicate
      * @param function animation consumer
      * @return whether to success
+     * @since 3.4.2
      */
     public synchronized boolean addLocalRotModifier(@NotNull Predicate<RenderedBone> predicate, @NotNull Function<Quaternionf, Quaternionf> function) {
         if (predicate.test(this)) {
             localRotModifier = localRotModifier.andThen(function);
+            enableContinuousTransforms();
             return true;
         }
         return false;
@@ -328,13 +336,17 @@ public final class RenderedBone implements BoneEventHandler {
 
     /**
      * Adds global rot modifier.
+     * The model tree samples its animated pose and modifiers together on tracker ticks.
+     * Example: {@code bone.addGlobalRotModifier(b -> true, q -> q.rotateY(yaw));}
      * @param predicate predicate
      * @param function animation consumer
      * @return whether to success
+     * @since 3.4.2
      */
     public synchronized boolean addGlobalRotModifier(@NotNull Predicate<RenderedBone> predicate, @NotNull Function<Quaternionf, Quaternionf> function) {
         if (predicate.test(this)) {
             globalRotModifier = globalRotModifier.andThen(function);
+            enableContinuousTransforms();
             return true;
         }
         return false;
@@ -342,13 +354,17 @@ public final class RenderedBone implements BoneEventHandler {
 
     /**
      * Adds position modifier.
+     * The model tree samples its animated pose and modifiers together on tracker ticks.
+     * Example: {@code bone.addPositionModifier(b -> true, p -> p.add(offset));}
      * @param predicate predicate
      * @param function animation consumer
      * @return whether to success
+     * @since 3.4.2
      */
     public synchronized boolean addPositionModifier(@NotNull Predicate<RenderedBone> predicate, @NotNull Function<Vector3f, Vector3f> function) {
         if (predicate.test(this)) {
             positionModifier = positionModifier.andThen(function);
+            enableContinuousTransforms();
             return true;
         }
         return false;
@@ -458,16 +474,17 @@ public final class RenderedBone implements BoneEventHandler {
         defaultPosition = movement;
     }
 
-    private @NotNull Vector3f modifiedPosition(boolean preventModifierUpdate) {
-        return preventModifierUpdate ? lastModifiedPosition : (lastModifiedPosition = positionModifier.apply(lastModifiedPosition.set(EMPTY_VECTOR)));
+    private boolean continuousTransforms() {
+        return root.continuousTransforms || (transformParent != null && transformParent.continuousTransforms());
     }
 
-    private @NotNull Quaternionf modifiedLocalRot(boolean preventModifierUpdate) {
-        return preventModifierUpdate ? lastModifiedLocalRot : (lastModifiedLocalRot = localRotModifier.apply(lastModifiedLocalRot.identity()));
-    }
-
-    private @NotNull Quaternionf modifiedGlobalRot(boolean preventModifierUpdate) {
-        return preventModifierUpdate ? lastModifiedGlobalRot : (lastModifiedGlobalRot = globalRotModifier.apply(lastModifiedGlobalRot.identity()));
+    private void enableContinuousTransforms() {
+        if (root.continuousTransforms) return;
+        root.continuousTransforms = true;
+        for (var bone : root.flattenBones()) {
+            var parent = bone.transformParent;
+            if (parent != null && parent.root != root) parent.enableContinuousTransforms();
+        }
     }
 
     public boolean tint(@NotNull Predicate<RenderedBone> predicate) {
@@ -624,6 +641,9 @@ public final class RenderedBone implements BoneEventHandler {
         //Caches
         private final Vector3f positionCache = new Vector3f(), scaleCache = new Vector3f();
         private final Quaternionf localRotCache = new Quaternionf(), globalRotCache = new Quaternionf();
+        private final BoneMovement localBefore = new BoneMovement();
+        private Vector3f lastModifiedPosition = new Vector3f();
+        private Quaternionf lastModifiedLocalRot = new Quaternionf(), lastModifiedGlobalRot = new Quaternionf();
 
         //Lock
         private final DuplexLock lock = new DuplexLock();
@@ -633,40 +653,71 @@ public final class RenderedBone implements BoneEventHandler {
             this.consumer = consumer;
             state = new AnimationStateHandler<>(
                 AnimationProgress.EMPTY,
-                (_, a) -> skipInterpolation = (a != null && a.skipInterpolation()) || (transformParent != null && transformParent.state(uuid).skipInterpolation)
+                (_, a) -> skipInterpolation = a != null && a.skipInterpolation()
             );
         }
 
         @NotNull BoneMovement after() {
             if (!updateAfter.compareAndSet(true, false)) return after;
             var keyframe = state.afterKeyframe(AnimationProgress.EMPTY);
-            var preventModifierUpdate = interpolationDuration() < 1;
-            var def = keyframe.animate(defaultFrame, after);
+            var continuous = continuousTransforms();
+            var preventModifierUpdate = !continuous && interpolationDuration() < 1;
+            modifiedPosition(preventModifierUpdate);
+            modifiedLocalRot(preventModifierUpdate);
+            modifiedGlobalRot(preventModifierUpdate);
+            var def = transform(keyframe, after);
+            if (continuous && !skipInterpolation()) {
+                // Compose each endpoint in its own rotation space, then use the client's quaternion path.
+                var previous = transform(state.beforeKeyframe(AnimationProgress.EMPTY), localBefore);
+                var alpha = 1F - state.progress();
+                InterpolationUtil.lerp(previous.position(), def.position(), alpha, def.position());
+                InterpolationUtil.lerp(previous.scale(), def.scale(), alpha, def.scale());
+                InterpolationUtil.lerp(previous.rawRotation(), def.rawRotation(), alpha, def.rawRotation());
+                previous.rotation().slerp(def.rotation(), alpha, def.rotation());
+            }
+            return def;
+        }
+
+        private @NotNull BoneMovement transform(AnimationProgress keyframe, BoneMovement dest) {
+            var def = keyframe.animate(defaultFrame, dest);
             var parent = transformParent;
             if (parent != null) {
-                var p = parent.state(uuid).after();
+                var parentState = parent.state(uuid);
+                var p = parentState.after();
                 MathUtil.fma(
                         def.position().rotate(p.rotation()),
                         p.scale(),
                         p.position()
-                    ).sub(parent.lastModifiedPosition)
-                    .add(modifiedPosition(preventModifierUpdate));
+                    ).sub(parentState.lastModifiedPosition)
+                    .add(lastModifiedPosition);
                 if (parent.root != root) {
                     def.position().add(parent.root.group.getPosition()).sub(root.group.getPosition());
                 }
                 def.scale().mul(p.scale());
-                def.rotation().set(parent.lastModifiedGlobalRot.invert(globalRotCache)
-                    .mul(modifiedGlobalRot(preventModifierUpdate))
-                    .mul((keyframe.globalRotation() ? localRotCache.identity() : p.rotation().div(parent.lastModifiedLocalRot, localRotCache)).mul(def.rotation()))
-                    .mul(modifiedLocalRot(preventModifierUpdate))
+                def.rotation().set(parentState.lastModifiedGlobalRot.invert(globalRotCache)
+                    .mul(lastModifiedGlobalRot)
+                    .mul((keyframe.globalRotation() ? localRotCache.identity() : p.rotation().div(parentState.lastModifiedLocalRot, localRotCache)).mul(def.rotation()))
+                    .mul(lastModifiedLocalRot)
                 );
             } else {
-                def.position().add(modifiedPosition(preventModifierUpdate));
-                def.rotation().set(modifiedGlobalRot(preventModifierUpdate).get(globalRotCache)
+                def.position().add(lastModifiedPosition);
+                def.rotation().set(lastModifiedGlobalRot.get(globalRotCache)
                     .mul(def.rotation())
-                    .mul(modifiedLocalRot(preventModifierUpdate)));
+                    .mul(lastModifiedLocalRot));
             }
             return def;
+        }
+
+        private @NotNull Vector3f modifiedPosition(boolean preventModifierUpdate) {
+            return preventModifierUpdate ? lastModifiedPosition : (lastModifiedPosition = positionModifier.apply(lastModifiedPosition.set(EMPTY_VECTOR)));
+        }
+
+        private @NotNull Quaternionf modifiedLocalRot(boolean preventModifierUpdate) {
+            return preventModifierUpdate ? lastModifiedLocalRot : (lastModifiedLocalRot = localRotModifier.apply(lastModifiedLocalRot.identity()));
+        }
+
+        private @NotNull Quaternionf modifiedGlobalRot(boolean preventModifierUpdate) {
+            return preventModifierUpdate ? lastModifiedGlobalRot : (lastModifiedGlobalRot = globalRotModifier.apply(lastModifiedGlobalRot.identity()));
         }
 
         private boolean tick() {
@@ -674,7 +725,7 @@ public final class RenderedBone implements BoneEventHandler {
                 if (uuid != null && perPlayerState.remove(uuid, this)) {
                     consumer.accept(uuid);
                 }
-            }) || firstTick;
+            }) || firstTick || continuousTransforms();
             if (result && updateAfter.compareAndSet(false, true)) {
                 lock.accessToWriteLock(() -> before.set(current));
                 updateCurrent.set(true);
@@ -684,13 +735,18 @@ public final class RenderedBone implements BoneEventHandler {
         }
 
         private float progress() {
-            return 1F - state.progress();
+            return continuousTransforms() ? 1F : 1F - state.progress();
         }
 
         private int interpolationDuration() {
-            if (skipInterpolation) return 0;
+            if (skipInterpolation()) return 0;
+            if (continuousTransforms()) return 1;
             var frame = state.frame() / (float) Tracker.MINECRAFT_TICK_MULTIPLIER;
             return Math.round(frame + MathUtil.FLOAT_COMPARISON_EPSILON);
+        }
+
+        private boolean skipInterpolation() {
+            return skipInterpolation || (transformParent != null && transformParent.state(uuid).skipInterpolation());
         }
 
         private void sendTransformation(@NotNull AnimationBundler bundler) {
@@ -719,16 +775,23 @@ public final class RenderedBone implements BoneEventHandler {
 
         private @NotNull Vector3f worldPosition(@NotNull BonePosition position, @NotNull BoneMovement cache) {
             var progress = progress();
-            var interpolated = lock.accessToReadLock(() -> before.lerp(current, progress, cache));
-            return MathUtil.fma(
+            var continuous = continuousTransforms();
+            var interpolated = lock.accessToReadLock(() -> {
+                if (!continuous) return before.lerp(current, progress, cache);
+                cache.set(current);
+                cache.position().set(position.localOffset()).mul(cache.scale())
+                    .add(itemStack.offset()).rotate(cache.rotation()).add(current.position());
+                return cache;
+            });
+            var result = continuous ? interpolated.position().add(position.globalOffset()) : MathUtil.fma(
                     interpolated.position()
                         .add(itemStack.offset())
                         .add(position.localOffset())
                         .rotate(interpolated.rotation()),
                     interpolated.scale(),
                     position.globalOffset()
-                )
-                .add(root.getGroup().getPosition())
+                );
+            return result.add(root.getGroup().getPosition())
                 .mul(scale.getAsFloat())
                 .rotateX(-rotation.radianX())
                 .rotateY(-rotation.radianY());
