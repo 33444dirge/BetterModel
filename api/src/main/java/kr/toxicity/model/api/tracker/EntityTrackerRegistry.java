@@ -36,6 +36,7 @@ import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -63,6 +64,7 @@ public final class EntityTrackerRegistry {
     @ToString.Include
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean loaded = new AtomicBoolean();
+    private volatile CompletableFuture<Void> initialSpawnPreparation = CompletableFuture.completedFuture(null);
     @ToString.Include
     private final BaseEntity entity;
     private final int id;
@@ -337,6 +339,39 @@ public final class EntityTrackerRegistry {
     }
 
     /**
+     * Returns the completion of initial model-binding dispatch for this source entity.
+     * The default future is already complete.
+     * <pre>{@code
+     * registry.initialSpawnPreparation().thenRun(() -> requestModelPairing());
+     * }</pre>
+     *
+     * @return the initial preparation future
+     * @since 3.4.2
+     */
+    @ApiStatus.Internal
+    public @NotNull CompletableFuture<Void> initialSpawnPreparation() {
+        return initialSpawnPreparation;
+    }
+
+    /**
+     * Installs initial model-binding preparation before the source entity is published.
+     * Closing or despawning this registry releases the preparation.
+     * <pre>{@code
+     * var preparation = new CompletableFuture<Void>();
+     * registry.initialSpawnPreparation(preparation);
+     * }</pre>
+     *
+     * @param preparation completion of initial binding dispatch
+     * @throws NullPointerException if preparation is null
+     * @since 3.4.2
+     */
+    @ApiStatus.Internal
+    public void initialSpawnPreparation(@NotNull CompletableFuture<Void> preparation) {
+        initialSpawnPreparation = Objects.requireNonNull(preparation);
+        if (isClosed()) preparation.complete(null);
+    }
+
+    /**
      * Closes the registry.
      *
      * @return true if closed successfully
@@ -347,14 +382,15 @@ public final class EntityTrackerRegistry {
     }
 
     /**
-     * Closes the registry with a specific reason.
-     *
+     * Closes the registry with a specific reason and releases pending initial preparation.
+     * <pre>{@code registry.close(Tracker.CloseReason.DESPAWN); }</pre>
      * @param reason the close reason
      * @return true if closed successfully
      * @since 1.15.2
      */
     public boolean close(@NotNull Tracker.CloseReason reason) {
         if (!closed.compareAndSet(false, true)) return false;
+        initialSpawnPreparation.complete(null);
         viewedPlayer().forEach(value -> value.sendEntityData(this));
         viewedPlayerMap.clear();
         for (EntityTracker value : trackers()) {
@@ -401,10 +437,19 @@ public final class EntityTrackerRegistry {
 
     /**
      * Despawns all trackers in the registry.
+     * Pending initialization is released, closing an empty pending registry.
+     * <pre>{@code
+     * registry.despawn();
+     * }</pre>
      *
      * @since 1.15.2
      */
     public void despawn() {
+        if (!initialSpawnPreparation.isDone() && trackerMap.isEmpty()) {
+            close(Tracker.CloseReason.DESPAWN);
+            return;
+        }
+        initialSpawnPreparation.complete(null);
         for (EntityTracker value : trackers()) {
             if (!value.forRemoval()) value.despawn();
         }

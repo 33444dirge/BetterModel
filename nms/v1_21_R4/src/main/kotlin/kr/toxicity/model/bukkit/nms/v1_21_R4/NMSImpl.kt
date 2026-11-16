@@ -54,6 +54,7 @@ import net.minecraft.world.item.component.CustomModelData
 import net.minecraft.world.level.entity.LevelEntityGetter
 import net.minecraft.world.level.entity.LevelEntityGetterAdapter
 import net.minecraft.world.level.entity.PersistentEntitySectionManager
+import org.bukkit.Bukkit
 import org.bukkit.craftbukkit.CraftWorld
 import org.bukkit.craftbukkit.entity.CraftEntity
 import org.bukkit.craftbukkit.entity.CraftPlayer
@@ -326,16 +327,27 @@ class NMSImpl : NMS {
                     ready.complete(null)
                 }
             }
-            try {
-                val accepted = if (BetterModelBukkit.IS_PAPER) {
-                    (registry.entity().handle() as Entity).bukkitEntity.scheduler.execute(
-                        BetterModelBukkit.platform() as Plugin, action, { ready.complete(null) }, 1
-                    )
-                } else registry.entity().platform().taskLater(1, action) != null
-                if (!accepted) ready.complete(null)
-            } catch (error: Exception) {
-                (BetterModelBukkit.platform() as Plugin).logger.log(Level.WARNING, "Unable to schedule model pairing for ${registry.uuid()}", error)
-                ready.complete(null)
+            registry.initialSpawnPreparation().whenComplete { _, _ ->
+                if (ready.isDone) return@whenComplete
+                if (registry.isClosed || !ctx.channel().isActive || !(BetterModelBukkit.platform() as Plugin).isEnabled) {
+                    ready.complete(null)
+                    return@whenComplete
+                }
+                try {
+                    if (BetterModelBukkit.IS_FOLIA && Bukkit.isOwnedByCurrentRegion((registry.entity().handle() as Entity).bukkitEntity)) {
+                        action.run()
+                    } else {
+                        val accepted = if (BetterModelBukkit.IS_PAPER) {
+                            (registry.entity().handle() as Entity).bukkitEntity.scheduler.execute(
+                                BetterModelBukkit.platform() as Plugin, action, { ready.complete(null) }, 1
+                            )
+                        } else registry.entity().platform().taskLater(1, action) != null
+                        if (!accepted) ready.complete(null)
+                    }
+                } catch (error: Exception) {
+                    (BetterModelBukkit.platform() as Plugin).logger.log(Level.WARNING, "Unable to schedule model pairing for ${registry.uuid()}", error)
+                    ready.complete(null)
+                }
             }
             return ready
         }

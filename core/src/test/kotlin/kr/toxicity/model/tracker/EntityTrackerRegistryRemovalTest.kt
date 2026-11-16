@@ -20,6 +20,7 @@ import kr.toxicity.model.api.tracker.EntityTrackerRegistry
 import kr.toxicity.model.api.tracker.Tracker
 import java.lang.reflect.Proxy
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
 import kotlin.test.*
 
 class EntityTrackerRegistryRemovalTest {
@@ -84,6 +85,44 @@ class EntityTrackerRegistryRemovalTest {
         assertTrue(registry.remove(player, false))
         assertEquals(0, restored)
         assertFalse(registry.viewedPlayer().findAny().isPresent)
+    }
+
+    @Test
+    fun `ordinary registries are ready without initialization`() {
+        assertTrue(registry.initialSpawnPreparation().isDone)
+    }
+
+    @Test
+    fun `closing releases pending initialization`() {
+        val preparation = CompletableFuture<Void>()
+        registry.initialSpawnPreparation(preparation)
+        assertFalse(preparation.isDone)
+        registry.close(Tracker.CloseReason.DESPAWN)
+        assertTrue(preparation.isDone)
+    }
+
+    @Test
+    fun `despawning an empty pending registry closes and releases it`() {
+        val preparation = CompletableFuture<Void>()
+        registry.initialSpawnPreparation(preparation)
+        registry.despawn()
+        assertTrue(preparation.isDone)
+        assertTrue(registry.isClosed)
+        assertNull(EntityTrackerRegistry.registry(registry.uuid()))
+    }
+
+    @Test
+    fun `despawning an ordinary empty registry keeps it available`() {
+        registry.despawn()
+        assertFalse(registry.isClosed)
+    }
+
+    @Test
+    fun `initialization installed after close is released`() {
+        registry.close(Tracker.CloseReason.DESPAWN)
+        val preparation = CompletableFuture<Void>()
+        registry.initialSpawnPreparation(preparation)
+        assertTrue(preparation.isDone)
     }
 
     private inline fun <reified T> stub(crossinline answer: (String) -> Any?): T =

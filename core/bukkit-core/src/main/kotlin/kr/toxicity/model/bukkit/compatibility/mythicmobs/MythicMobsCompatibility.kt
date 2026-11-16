@@ -10,25 +10,16 @@ package kr.toxicity.model.bukkit.compatibility.mythicmobs
 import io.lumine.mythic.bukkit.MythicBukkit
 import io.lumine.mythic.bukkit.events.MythicConditionLoadEvent
 import io.lumine.mythic.bukkit.events.MythicMechanicLoadEvent
-import io.lumine.mythic.bukkit.events.MythicMobPreSpawnConfigureEvent
 import io.lumine.mythic.bukkit.events.MythicTargeterLoadEvent
-import io.lumine.mythic.core.skills.SkillTriggers
-import io.lumine.mythic.core.skills.mechanics.CustomMechanic
-import kr.toxicity.model.api.BetterModel
 import kr.toxicity.model.api.bukkit.BetterModelBukkit
 import kr.toxicity.model.api.bukkit.entity.BaseBukkitEntity
-import kr.toxicity.model.api.entity.BaseEntity
 import kr.toxicity.model.api.script.AnimationScript
 import kr.toxicity.model.api.tracker.EntityTracker
-import kr.toxicity.model.api.tracker.EntityTrackerRegistry
-import kr.toxicity.model.api.tracker.Tracker
 import kr.toxicity.model.bukkit.compatibility.Compatibility
 import kr.toxicity.model.bukkit.compatibility.mythicmobs.condition.ModelHasPassengerCondition
 import kr.toxicity.model.bukkit.compatibility.mythicmobs.mechanic.*
 import kr.toxicity.model.bukkit.compatibility.mythicmobs.targeter.ModelPartTargeter
 import kr.toxicity.model.bukkit.util.registerListener
-import kr.toxicity.model.bukkit.util.PLUGIN
-import kr.toxicity.model.bukkit.util.wrap
 import kr.toxicity.model.manager.ScriptManagerImpl
 import kr.toxicity.model.util.CONFIG
 import kr.toxicity.model.util.componentOf
@@ -45,6 +36,7 @@ class MythicMobsCompatibility : Compatibility {
     }
 
     override fun start() {
+        MythicSpawnPreparation().start()
         ScriptManagerImpl.addBuilder("mm") { name ->
             val args = name.args() ?: return@addBuilder AnimationScript.EMPTY
             AnimationScript.of(BetterModelBukkit.IS_FOLIA) script@ { tracker ->
@@ -66,22 +58,6 @@ class MythicMobsCompatibility : Compatibility {
             }
         }
         registerListener(object : Listener {
-            @EventHandler
-            fun MythicMobPreSpawnConfigureEvent.prepareModel() {
-                if (!CONFIG.module().model || BetterModel.registryOrNull(entity.uniqueId) != null) return
-                if (mobType.getSkills(SkillTriggers.SPAWN)?.none {
-                    (it as? CustomMechanic)?.mechanic?.orElse(null) is ModelMechanic
-                } != false) return
-                // World.spawn invokes this event before publishing the entity. Keep skills in their original order.
-                val registry = EntityTrackerRegistry.getOrCreate(BaseEntity.of(entity.wrap()))
-                val cleanup = Runnable {
-                    if (registry.trackers().isEmpty()) registry.close(Tracker.CloseReason.DESPAWN)
-                }
-                if (BetterModelBukkit.IS_PAPER) {
-                    if (!entity.scheduler.execute(PLUGIN, cleanup, cleanup, 1)) cleanup.run()
-                } else if (entity.wrap().taskLater(1, cleanup) == null) cleanup.run()
-            }
-
             @EventHandler
             fun MythicMechanicLoadEvent.load() {
                 if (!CONFIG.module().model) return
