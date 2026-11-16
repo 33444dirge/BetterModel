@@ -550,16 +550,37 @@ public final class EntityTrackerRegistry {
 
     /**
      * Removes a player from viewing this registry.
+     * <pre>{@code
+     * registry.remove(player);
+     * }</pre>
      *
      * @param player the player
      * @return true if removed successfully
      * @since 1.15.2
      */
     public boolean remove(@NotNull PlatformPlayer player) {
+        return remove(player, true);
+    }
+
+    /**
+     * Removes this player's models, optionally restoring the source entity's data.
+     * Pairing removal already destroys the source entity on the client, so it does not
+     * require restoration packets that could reach a subsequent pairing.
+     * <pre>{@code
+     * registry.remove(player, false);
+     * }</pre>
+     *
+     * @param player the player leaving this registry
+     * @param restoreEntity whether to restore the source entity's visible data
+     * @return true if the player was registered
+     * @since 3.4.2
+     */
+    @ApiStatus.Internal
+    public boolean remove(@NotNull PlatformPlayer player, boolean restoreEntity) {
         var cache = viewedPlayerMap.remove(player.uuid());
         if (cache == null) return false;
         var handler = cache.channelHandler;
-        handler.sendEntityData(this);
+        if (restoreEntity) handler.sendEntityData(this);
         for (EntityTracker value : trackers()) {
             if (!value.forRemoval() && value.isSpawned(player)) value.remove(handler.player());
         }

@@ -14,4 +14,5 @@ dependencies {
     testImplementation(libs.adventure.api)
     testImplementation(libs.joml)
     testRuntimeOnly(libs.armormodel)
+    testRuntimeOnly(libs.concurrentutil)
 }

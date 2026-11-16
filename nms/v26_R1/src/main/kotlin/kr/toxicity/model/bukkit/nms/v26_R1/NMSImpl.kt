@@ -56,8 +56,11 @@ import net.minecraft.world.level.entity.PersistentEntitySectionManager
 import org.bukkit.craftbukkit.CraftWorld
 import org.bukkit.craftbukkit.entity.CraftEntity
 import org.bukkit.craftbukkit.entity.CraftPlayer
+import org.bukkit.plugin.Plugin
 import org.joml.Vector3d
 import java.util.*
+import java.util.concurrent.CompletableFuture
+import java.util.logging.Level
 import java.util.function.Consumer
 import java.util.function.IntConsumer
 
@@ -134,6 +137,10 @@ class NMSImpl : NMS {
         private val connection = player.handle.connection
         private val uuid = player.uniqueId
         private val base = adapt(player.wrap())
+        private var pendingWrite: CompletableFuture<Void>? = null
+        private var handlerClosed = false
+        private val pendingRemovals = HashMap<Int, CompletableFuture<Void>>()
+        private val pendingSpawns = HashSet<CompletableFuture<Void>>()
 
         init {
             val pipeline = getConnection(connection).channel.pipeline()
@@ -143,6 +150,7 @@ class NMSImpl : NMS {
         override fun close() {
             val channel = getConnection(connection).channel
             channel.eventLoop().submit {
+                releasePendingSpawns()
                 channel.pipeline().remove(INJECT_NAME)
             }
         }
@@ -179,12 +187,30 @@ class NMSImpl : NMS {
             list.send(player.wrap())
         }
 
-        private fun <T : ClientGamePacketListener> Packet<in T>.handle(): Packet<in T>? {
+        private fun <T : ClientGamePacketListener> Packet<in T>.handle(initialFlags: Map<Int, Byte> = emptyMap()): Packet<in T>? {
             when (this) {
-                is ClientboundBundlePacket -> return if (subPackets() is Keyed) this else ClientboundBundlePacket(subPackets().mapNotNull {
-                    it.handle()
-                })
+                is ClientboundBundlePacket -> {
+                    if (subPackets() is Keyed) return this
+                    val flags = subPackets().filterIsInstance<ClientboundSetEntityDataPacket>().mapNotNull { packet ->
+                        packet.packedItems().firstOrNull { it.id == SHARED_FLAG }?.let { packet.id to it.value() as Byte }
+                    }.toMap()
+                    return ClientboundBundlePacket(subPackets().flatMap {
+                        when (val handled = it.handle(flags)) {
+                            is ClientboundBundlePacket -> handled.subPackets().toList()
+                            null -> emptyList()
+                            else -> listOf(handled)
+                        }
+                    })
+                }
                 is ClientboundAddEntityPacket -> {
+                    EntityTrackerRegistry.registry(id)?.takeUnless { it.entity() is BasePlayer }?.let { registry ->
+                        if (!registry.isSpawned(this@PlayerChannelHandlerImpl.uuid)) return this
+                        // Initial metadata omits default flags, so explicitly hide within the pairing bundle.
+                        return ClientboundBundlePacket(listOf(this, ClientboundSetEntityDataPacket(id, listOf(
+                            SynchedEntityData.DataValue(SHARED_FLAG, EntityDataSerializers.BYTE,
+                                registry.entityFlag(this@PlayerChannelHandlerImpl.uuid, initialFlags[id] ?: 0))
+                        ))))
+                    }
                     val entity = id.toPlayerEntity() ?: return this
                     if (entity is HitBox) return entity.toFakeAddPacket()
                     val wrap = entity.bukkitEntity.wrap()
@@ -198,7 +224,7 @@ class NMSImpl : NMS {
                     entityIds
                         .asSequence()
                         .mapNotNull map@ {
-                            it.toRegistry {
+                            EntityTrackerRegistry.registry(it) ?: it.toRegistry {
                                 return@map null
                             }
                         }
@@ -246,7 +272,88 @@ class NMSImpl : NMS {
         }
 
         override fun write(ctx: ChannelHandlerContext, msg: Any, promise: ChannelPromise) {
-            super.write(ctx, if (msg is Packet<*>) msg.handle() ?: return else msg, promise)
+            val registries = (msg as? Packet<*>)?.spawnRegistries()?.distinct()?.toList().orEmpty()
+            if (pendingWrite == null && registries.isEmpty()) {
+                writePacket(ctx, msg, promise)
+                return
+            }
+            // Start every entity task immediately, including while earlier pairing packets are pending.
+            val ready = CompletableFuture.allOf(*registries.map { registry ->
+                pendingRemovals[registry.entity().id()]?.handle { _, _ -> null }?.thenComposeAsync({ prepareSpawn(ctx, registry) }, ctx.executor())
+                    ?: prepareSpawn(ctx, registry)
+            }.toTypedArray())
+            val previous = pendingWrite ?: CompletableFuture.completedFuture(null)
+            val next = previous.handle { _, _ -> null }.thenCombine(ready) { _, _ -> Unit }.thenAcceptAsync({
+                writePacket(ctx, msg, promise)
+            }, ctx.executor())
+            pendingWrite = next
+            val removedIds = (msg as? Packet<*>)?.removedEntityIds()?.toList().orEmpty()
+            removedIds.forEach { pendingRemovals[it] = next }
+            next.whenComplete { _, error ->
+                removedIds.forEach { if (pendingRemovals[it] === next) pendingRemovals.remove(it) }
+                if (error != null) promise.tryFailure(error)
+                if (pendingWrite === next) {
+                    pendingWrite = null
+                    ctx.flush()
+                }
+            }
+        }
+
+        private fun Packet<*>.spawnRegistries(): Sequence<EntityTrackerRegistry> = when (this) {
+            is ClientboundBundlePacket -> if (subPackets() is Keyed) emptySequence() else subPackets().asSequence().flatMap { it.spawnRegistries() }
+            is ClientboundAddEntityPacket -> sequenceOf(EntityTrackerRegistry.registry(id)).filterNotNull().filter { it.entity() !is BasePlayer }
+            else -> emptySequence()
+        }
+
+        private fun Packet<*>.removedEntityIds(): Sequence<Int> = when (this) {
+            is ClientboundBundlePacket -> if (subPackets() is Keyed) emptySequence() else subPackets().asSequence().flatMap { it.removedEntityIds() }
+            is ClientboundRemoveEntitiesPacket -> entityIds.asSequence()
+            else -> emptySequence()
+        }
+
+        private fun prepareSpawn(ctx: ChannelHandlerContext, registry: EntityTrackerRegistry): CompletableFuture<Void> {
+            if (handlerClosed || !ctx.channel().isActive) return CompletableFuture.completedFuture(null)
+            val ready = CompletableFuture<Void>()
+            pendingSpawns += ready
+            ready.whenComplete { _, _ -> ctx.executor().execute { pendingSpawns.remove(ready) } }
+            val action = Runnable {
+                try {
+                    if (!ready.isDone && ctx.channel().isActive && !registry.isClosed) registry.spawn(player.wrap())
+                } catch (error: Exception) {
+                    (BetterModelBukkit.platform() as Plugin).logger.log(Level.WARNING, "Unable to prepare model pairing for ${registry.uuid()}", error)
+                } finally {
+                    ready.complete(null)
+                }
+            }
+            try {
+                val accepted = if (BetterModelBukkit.IS_PAPER) {
+                    (registry.entity().handle() as Entity).bukkitEntity.scheduler.execute(
+                        BetterModelBukkit.platform() as Plugin, action, { ready.complete(null) }, 1
+                    )
+                } else registry.entity().platform().taskLater(1, action) != null
+                if (!accepted) ready.complete(null)
+            } catch (error: Exception) {
+                (BetterModelBukkit.platform() as Plugin).logger.log(Level.WARNING, "Unable to schedule model pairing for ${registry.uuid()}", error)
+                ready.complete(null)
+            }
+            return ready
+        }
+
+        private fun writePacket(ctx: ChannelHandlerContext, msg: Any, promise: ChannelPromise) {
+            val packet = if (msg is Packet<*>) msg.handle() else msg
+            if (packet == null) promise.trySuccess() else super.write(ctx, packet, promise)
+        }
+
+        private fun releasePendingSpawns() {
+            handlerClosed = true
+            pendingRemovals.clear()
+            pendingSpawns.toList().forEach { it.complete(null) }
+            pendingSpawns.clear()
+        }
+
+        override fun channelInactive(ctx: ChannelHandlerContext) {
+            releasePendingSpawns()
+            super.channelInactive(ctx)
         }
 
         override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
@@ -282,7 +389,7 @@ class NMSImpl : NMS {
         }
 
         private fun EntityTrackerRegistry.remove() {
-            remove(player.wrap())
+            remove(player.wrap(), false)
         }
     }
 
