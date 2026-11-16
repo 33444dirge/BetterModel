@@ -27,7 +27,6 @@ import io.lumine.mythic.core.skills.mechanics.MetaSkillMechanic
 import kr.toxicity.model.api.BetterModel
 import kr.toxicity.model.api.bukkit.BetterModelBukkit
 import kr.toxicity.model.api.entity.BaseEntity
-import kr.toxicity.model.api.scheduler.ModelTask
 import kr.toxicity.model.api.tracker.EntityTrackerRegistry
 import kr.toxicity.model.api.tracker.Tracker
 import kr.toxicity.model.bukkit.compatibility.mythicmobs.mechanic.AbstractSkillMechanic
@@ -38,13 +37,13 @@ import kr.toxicity.model.bukkit.util.wrap
 import kr.toxicity.model.util.CONFIG
 import kr.toxicity.model.util.PLATFORM
 import org.bukkit.entity.Entity
+import org.bukkit.Bukkit
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
 import org.bukkit.event.server.PluginDisableEvent
 import java.util.UUID
 import java.util.Queue
-import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import java.util.logging.Level
@@ -55,6 +54,7 @@ internal class MythicSpawnPreparation : Listener {
     @Volatile private var preparedTypes = ConcurrentHashMap<MythicMob, List<CompletionMechanic>>()
     private val generation = AtomicLong()
     private val pending = ConcurrentHashMap<UUID, PendingSpawn>()
+    private var dispatchObservation: AutoCloseable? = null
     // MM 5.13 exposes a merged copy from getSkills(SPAWN), and provides no queue mutator.
     private val skillQueuesField = runCatching {
         MobType::class.java.getDeclaredField("skills").apply { isAccessible = true }
@@ -62,7 +62,29 @@ internal class MythicSpawnPreparation : Listener {
         PLUGIN.logger.log(Level.WARNING, "Initial MythicMobs model preparation is unavailable for this skill layout", it)
     }.getOrNull()
 
-    fun start() = registerListener(this)
+    fun start() {
+        registerListener(this)
+        observeDispatchFailures()
+    }
+
+    private fun observeDispatchFailures() {
+        if (!accepting || dispatchObservation != null) return
+        val mythic = Bukkit.getPluginManager().getPlugin("MythicMobs") ?: return
+        dispatchObservation = MythicDispatchObservation.subscribe(
+            mythic.javaClass.classLoader, PLUGIN,
+            begin = begin@{ context ->
+                val state = pending[context.entityId] ?: return@begin null
+                state.completion.observe(
+                    context.entity, context.mobType, generation.get(), isSpawn = context.trigger == SkillTriggers.SPAWN,
+                    isCurrent = { isCurrent(state) }, onFailure = { state.completeOnOwner() }
+                )
+            },
+            warning = { message, error -> PLUGIN.logger.log(Level.WARNING, message, error) }
+        )
+    }
+
+    private fun isCurrent(state: PendingSpawn) = accepting && state.completion.epoch == generation.get() &&
+        pending[state.registry.uuid()] === state
 
     @EventHandler
     fun MythicMobPreSpawnConfigureEvent.prepare() {
@@ -73,7 +95,7 @@ internal class MythicSpawnPreparation : Listener {
             val skills = type.getSkills(SkillTriggers.SPAWN)
             val candidate = skills.firstOrNull { it.hasImmediateModel() } ?: return@computeIfAbsent emptyList()
             val queue = type.completionQueue(skills) ?: return@computeIfAbsent emptyList()
-            listOf(CompletionMechanic(candidate.config, queue).also { queue.add(it) })
+            listOf(CompletionMechanic(candidate.config, queue, type, epoch).also { queue.add(it) })
         }
         if (markers.isEmpty()) return
         if (!accepting || epoch != generation.get() || types !== preparedTypes) {
@@ -81,12 +103,11 @@ internal class MythicSpawnPreparation : Listener {
             return
         }
         val registry = EntityTrackerRegistry.getOrCreate(BaseEntity.of(entity.wrap()))
-        val state = PendingSpawn(entity, registry)
+        val state = PendingSpawn(entity, registry, mobType, epoch)
         registry.initialSpawnPreparation(state.ready)
         pending[entity.uniqueId] = state
         state.ready.whenComplete { _, _ ->
             pending.remove(registry.uuid(), state)
-            state.timeout?.cancel()
         }
         if (!accepting || epoch != generation.get()) {
             state.complete()
@@ -99,13 +120,13 @@ internal class MythicSpawnPreparation : Listener {
                 return
             }
             // An exception in MM's root dispatcher can bypass its final mechanic.
-            state.timeout = PLATFORM.scheduler().asyncTaskLater(100) {
+            val timeout = PLATFORM.scheduler().asyncTaskLater(100) {
                 if (!state.ready.isDone) {
                     PLUGIN.logger.warning("Initial MythicMobs model dispatch timed out for ${registry.uuid()}")
                     state.completeOnOwner()
                 }
             }
-            if (state.ready.isDone) state.timeout?.cancel()
+            state.completion.timeout { timeout.cancel() }
         } catch (error: Exception) {
             PLUGIN.logger.log(Level.WARNING, "Unable to observe initial MythicMobs model dispatch for ${registry.uuid()}", error)
             state.complete()
@@ -147,22 +168,30 @@ internal class MythicSpawnPreparation : Listener {
     }
 
     // MM always runs this after its immediate root mechanics have submitted their entity work.
-    private inner class CompletionMechanic(config: MythicLineConfig, val queue: Queue<SkillMechanic>) : AbstractSkillMechanic(config) {
+    private inner class CompletionMechanic(
+        config: MythicLineConfig, val queue: Queue<SkillMechanic>, val mobType: MythicMob, val epoch: Long
+    ) : AbstractSkillMechanic(config) {
         override fun getRunAsync() = true
         override fun isUsableFromCaster(data: SkillMetadata) = true
         override fun isUsableFromSkill(data: SkillMetadata) = true
         override fun execute(data: SkillMetadata): Boolean {
-            if (data.cause == SkillTriggers.SPAWN) pending[data.caster.entity.uniqueId]?.completeOnOwner()
+            if (data.cause == SkillTriggers.SPAWN) {
+                val caster = data.caster.entity
+                val state = pending[caster.uniqueId]
+                if (state != null && isCurrent(state) && state.completion.matches(caster.bukkitEntity, mobType, epoch)) {
+                    state.completeOnOwner()
+                }
+            }
             return true
         }
     }
 
-    private inner class PendingSpawn(val entity: Entity, val registry: EntityTrackerRegistry) {
-        val ready = CompletableFuture<Void>()
-        @Volatile var timeout: ModelTask? = null
+    private inner class PendingSpawn(val entity: Entity, val registry: EntityTrackerRegistry, mobType: MythicMob, epoch: Long) {
+        val completion = MythicSpawnPreparationState(entity, mobType, epoch)
+        val ready get() = completion.ready
 
         fun completeOnOwner() {
-            if (ready.isDone) return
+            if (!completion.requestCompletion()) return
             val completion = Runnable { complete() }
             try {
                 if (BetterModelBukkit.IS_PAPER) {
@@ -175,14 +204,22 @@ internal class MythicSpawnPreparation : Listener {
         }
 
         fun complete() {
-            if (registry.trackers().isEmpty()) registry.close(Tracker.CloseReason.DESPAWN)
-            ready.complete(null)
+            completion.complete {
+                if (registry.trackers().isEmpty()) registry.close(Tracker.CloseReason.DESPAWN)
+            }
         }
     }
 
     private fun reset() {
         accepting = false
         generation.incrementAndGet()
+        val observation = dispatchObservation
+        dispatchObservation = null
+        try {
+            observation?.close()
+        } catch (error: Exception) {
+            PLUGIN.logger.log(Level.WARNING, "Unable to unsubscribe MythicMobs root-dispatch observation", error)
+        }
         val types = preparedTypes
         preparedTypes = ConcurrentHashMap()
         types.values.flatten().forEach { it.queue.remove(it) }
@@ -193,10 +230,16 @@ internal class MythicSpawnPreparation : Listener {
     fun MythicPreReloadEvent.resetPreparation() = reset()
 
     @EventHandler
-    fun MythicReloadCompleteEvent.allowPreparation() { accepting = PLUGIN.isEnabled }
+    fun MythicReloadCompleteEvent.allowPreparation() {
+        accepting = PLUGIN.isEnabled
+        observeDispatchFailures()
+    }
 
     @EventHandler
-    fun MythicLoadedEvent.allowPreparation() { accepting = PLUGIN.isEnabled }
+    fun MythicLoadedEvent.allowPreparation() {
+        accepting = PLUGIN.isEnabled
+        observeDispatchFailures()
+    }
 
     @EventHandler
     fun PluginDisableEvent.releasePreparation() {
