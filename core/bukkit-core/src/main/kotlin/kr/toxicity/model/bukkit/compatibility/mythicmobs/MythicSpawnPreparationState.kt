@@ -33,7 +33,9 @@ internal class MythicSpawnPreparationState(val entity: Any, val mobType: Any, va
         isCurrent: () -> Boolean, onFailure: () -> Unit
     ): (() -> Unit)? {
         if (!isSpawn || !matches(entity, mobType, epoch) || ready.isDone || !isCurrent()) return null
-        return { if (!ready.isDone && isCurrent()) onFailure() }
+        return MythicDispatchObservation.PreparationObservation(ready) {
+            if (!ready.isDone && isCurrent()) onFailure()
+        }
     }
 
     fun requestCompletion() = !ready.isDone && requested.compareAndSet(false, true)

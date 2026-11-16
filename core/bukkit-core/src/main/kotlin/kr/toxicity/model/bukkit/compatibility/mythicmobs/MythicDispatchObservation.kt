@@ -9,6 +9,7 @@ package kr.toxicity.model.bukkit.compatibility.mythicmobs
 
 import java.lang.reflect.Proxy
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -16,6 +17,11 @@ import java.util.concurrent.atomic.AtomicReference
 /** Optional v1 contract adapter. No new MM API type is linked into mandatory classes. */
 internal object MythicDispatchObservation {
     data class Context(val dispatchId: UUID, val entityId: UUID, val entity: Any, val mobType: Any, val trigger: Any)
+
+    /** Connects an observation's lifetime to its exact preparation while preserving the callback contract. */
+    class PreparationObservation(val ready: CompletableFuture<*>, private val onFailure: () -> Unit) : () -> Unit {
+        override fun invoke() = onFailure()
+    }
 
     fun subscribe(
         loader: ClassLoader, owner: Any,
@@ -65,7 +71,12 @@ internal object MythicDispatchObservation {
                         if (callback == null || closed.get()) none else {
                             val reference = AtomicReference<(() -> Unit)?>(callback)
                             pending.add(reference)
-                            if (closed.get()) {
+                            // Register after publication so already-complete and concurrently completing preparations both revoke it.
+                            (callback as? PreparationObservation)?.ready?.whenComplete { _, _ ->
+                                reference.set(null)
+                                pending.remove(reference)
+                            }
+                            if (closed.get() || reference.get() == null) {
                                 reference.set(null)
                                 pending.remove(reference)
                                 none
