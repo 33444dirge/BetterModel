@@ -55,6 +55,7 @@ class MythicMobsCompatibility : Compatibility {
         }
 
         registerYaw()
+        MythicSpawnPreparation().start()
         ScriptManagerImpl.addBuilder("mm") { name ->
             val args = name.args() ?: return@addBuilder AnimationScript.EMPTY
             AnimationScript.of(BetterModelBukkit.IS_FOLIA) script@ { tracker ->

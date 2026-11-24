@@ -231,6 +231,7 @@ public sealed abstract class Tracker implements AutoCloseable permits EntityTrac
     }
 
     private void animationTick() {
+        // Only the tracker tick may advance animations and write its shared packet bundles.
         if (tickPause.get()) return; // Pause
         scriptProcessor.tick();
         animationTicker.tick();
@@ -574,6 +575,7 @@ public sealed abstract class Tracker implements AutoCloseable permits EntityTrac
 
     /**
      * Plays a blueprint animation on filtered bones.
+     * Animation progression and packet generation occur on the next scheduled tracker tick.
      *
      * @param animation the blueprint animation
      * @param modifier the animation modifier
@@ -589,7 +591,6 @@ public sealed abstract class Tracker implements AutoCloseable permits EntityTrac
             match = true;
         }
         match |= pipeline.matchAnimation((b, a) -> b.addAnimation(a, animation, modifier, removeTask));
-        if (match && isScheduled()) animationTick();
         return match;
     }
 
@@ -618,6 +619,7 @@ public sealed abstract class Tracker implements AutoCloseable permits EntityTrac
 
     /**
      * Stops an animation on filtered bones for a specific player (optional).
+     * The animation update is applied on the next scheduled tracker tick.
      *
      * @param filter the bone filter
      * @param animation the animation name
@@ -629,7 +631,6 @@ public sealed abstract class Tracker implements AutoCloseable permits EntityTrac
         var match = false;
         match |= scriptProcessor.stopAnimation(animation);
         match |= pipeline.matchTree(b -> b.stopAnimation(filter, animation, player));
-        if (match && isScheduled()) animationTick();
         return match;
     }
 
@@ -650,6 +651,7 @@ public sealed abstract class Tracker implements AutoCloseable permits EntityTrac
 
     /**
      * Replaces a running animation on filtered bones with a blueprint animation.
+     * The animation update is applied on the next scheduled tracker tick.
      *
      * @param target the name of the animation to replace
      * @param animation the new blueprint animation
@@ -665,7 +667,6 @@ public sealed abstract class Tracker implements AutoCloseable permits EntityTrac
             match = true;
         }
         match |= pipeline.matchAnimation((b, a) -> b.replaceAnimation(a, target, animation, modifier));
-        if (match && isScheduled()) animationTick();
         return match;
     }
 

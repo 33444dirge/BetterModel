@@ -683,14 +683,20 @@ object SkinManagerImpl : SkinManager, GlobalManager {
         set.forEach(block)
     }
 
+    private data class ProfileCacheKey(val id: UUID, val skin: URI?, val cape: URI?, val slim: Boolean)
+
+    private fun ModelProfile.cacheKey(id: UUID = info().id) = skin().let {
+        ProfileCacheKey(id, it.skin, it.cape, it.slim)
+    }
+
     private val profileCache = Caffeine.newBuilder()
         .expireAfterAccess(5, TimeUnit.MINUTES)
-        .removalListener<UUID, SkinDataImpl> { key, value, cause ->
+        .removalListener<ProfileCacheKey, SkinDataImpl> { key, value, cause ->
             if (cause == RemovalCause.EXPIRED && key != null && value != null) {
                 handleExpiration(key, value)
             }
         }
-        .build<UUID, SkinDataImpl>()
+        .build<ProfileCacheKey, SkinDataImpl>()
 
     private val fallback by lazy {
         PLATFORM.getResource("fallback_skin.png")!!.use {
@@ -698,59 +704,63 @@ object SkinManagerImpl : SkinManager, GlobalManager {
         }
     }
 
-    private fun handleExpiration(key: UUID, skin: SkinDataImpl) {
+    private fun handleExpiration(key: ProfileCacheKey, skin: SkinDataImpl) {
         skin.profile().let {
-            if (!callEvent { RemovePlayerSkinEvent(it) } || it.playerEquals()) profileCache.put(key, skin)
+            if (!callEvent { RemovePlayerSkinEvent(it) } || it.playerEquals()) profileCache.asMap().putIfAbsent(key, skin)
         }
     }
 
     private fun ModelProfile.playerEquals() = player()?.let { player ->
-        ModelProfile.of(player).info()
-    } == info()
+        ModelProfile.of(player).cacheKey()
+    } == cacheKey()
 
     override fun fallback(): SkinData = fallback
 
     override fun complete(profile: ModelProfile.Uncompleted): CompletableFuture<out SkinData> {
         if (profile.info() == ModelProfileInfo.UNKNOWN) return CompletableFuture.completedFuture(fallback)
-        return profileCache.getIfPresent(profile.info().id)?.let { CompletableFuture.completedFuture(it) } ?: profile.complete().thenApply { provided ->
-            CreatePlayerSkinEvent(provided).run {
+        return profile.complete().thenCompose profile@ { provided ->
+            val key = provided.cacheKey(profile.info().id)
+            profileCache.getIfPresent(key)?.let { return@profile CompletableFuture.completedFuture(it) }
+            val selected = CreatePlayerSkinEvent(provided).run {
                 call()
                 modelProfile
             }
-        }.thenComposeAsync compose@ { selected ->
-            val skin = selected.skin().skin ?: return@compose CompletableFuture.completedFuture(fallback)
-            val cape = selected.skin().cape
-            httpClient {
-                fun URI.toFuture() = sendAsync(
-                    buildHttpRequest {
-                        uri(this@toFuture)
-                        GET()
-                    },
-                    HttpResponse.BodyHandlers.ofInputStream()
-                ).thenComposeAsync { request ->
-                    CompletableFuture.supplyAsync { request.body().use { ImageIO.read(it) } }
-                }
-                skin.toFuture().thenCombine(cape?.toFuture() ?: CompletableFuture.completedFuture(null)) { skin, cape ->
-                    SkinDataImpl(
-                        selected,
-                        skin.convertLegacy(),
-                        cape
-                    ).apply {
-                        profileCache.put(profile.info().id, this)
+            CompletableFuture.completedFuture(selected).thenComposeAsync compose@ {
+                val skin = selected.skin().skin ?: return@compose CompletableFuture.completedFuture(fallback)
+                val cape = selected.skin().cape
+                httpClient {
+                    fun URI.toFuture() = sendAsync(
+                        buildHttpRequest {
+                            uri(this@toFuture)
+                            GET()
+                        },
+                        HttpResponse.BodyHandlers.ofInputStream()
+                    ).thenComposeAsync { request ->
+                        CompletableFuture.supplyAsync { request.body().use { ImageIO.read(it) } }
                     }
+                    skin.toFuture().thenCombine(cape?.toFuture() ?: CompletableFuture.completedFuture(null)) { skin, cape ->
+                        SkinDataImpl(
+                            selected,
+                            skin.convertLegacy(),
+                            cape
+                        ).apply {
+                            profileCache.put(key, this)
+                        }
+                    }
+                }.orElse {
+                    it.handleException("Unable to read this skin: ${selected.info().name}")
+                    CompletableFuture.completedFuture(fallback)
                 }
-            }.orElse {
-                it.handleException("Unable to read this skin: ${selected.info().name}")
-                CompletableFuture.completedFuture(fallback)
             }
         }.exceptionally {
             it.handleException("unable to read this skin: ${profile.info().name}")
-            profileCache.invalidate(profile.info().id)
             null
         }
     }
 
-    override fun removeCache(profile: ModelProfile) = profileCache.invalidate(profile.info().id)
+    override fun removeCache(profile: ModelProfile) {
+        profileCache.asMap().keys.removeIf { it.id == profile.info().id }
+    }
 
     private fun BufferedImage.convertLegacy() = if (height == 64) this else BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB).also { newImage ->
         fun drawTo(from: UVPos, to: UVPos, xr: IntRange, zr: IntRange) {

@@ -37,6 +37,7 @@ import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -72,6 +73,7 @@ public final class EntityTrackerRegistry {
     @ToString.Include
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean loaded = new AtomicBoolean();
+    private volatile CompletableFuture<Void> initialSpawnPreparation = CompletableFuture.completedFuture(null);
     @ToString.Include
     private final BaseEntity entity;
     private final int id;
@@ -350,6 +352,39 @@ public final class EntityTrackerRegistry {
     }
 
     /**
+     * Returns the completion of initial model-binding dispatch for this source entity.
+     * The default future is already complete.
+     * <pre>{@code
+     * registry.initialSpawnPreparation().thenRun(() -> requestModelPairing());
+     * }</pre>
+     *
+     * @return the initial preparation future
+     * @since 3.7.1
+     */
+    @ApiStatus.Internal
+    public @NotNull CompletableFuture<Void> initialSpawnPreparation() {
+        return initialSpawnPreparation;
+    }
+
+    /**
+     * Installs initial model-binding preparation before the source entity is published.
+     * Closing or despawning this registry releases the preparation.
+     * <pre>{@code
+     * var preparation = new CompletableFuture<Void>();
+     * registry.initialSpawnPreparation(preparation);
+     * }</pre>
+     *
+     * @param preparation completion of initial binding dispatch
+     * @throws NullPointerException if preparation is null
+     * @since 3.7.1
+     */
+    @ApiStatus.Internal
+    public void initialSpawnPreparation(@NotNull CompletableFuture<Void> preparation) {
+        initialSpawnPreparation = Objects.requireNonNull(preparation);
+        if (isClosed()) preparation.complete(null);
+    }
+
+    /**
      * Closes the registry.
      *
      * @return true if closed successfully
@@ -360,14 +395,15 @@ public final class EntityTrackerRegistry {
     }
 
     /**
-     * Closes the registry with a specific reason.
-     *
+     * Closes the registry with a specific reason and releases pending initial preparation.
+     * <pre>{@code registry.close(TrackerCloseReason.DESPAWN); }</pre>
      * @param reason the close reason
      * @return true if closed successfully
      * @since 1.15.2
      */
     public boolean close(@NotNull TrackerCloseReason reason) {
         if (!closed.compareAndSet(false, true)) return false;
+        initialSpawnPreparation.complete(null);
         viewedPlayer().forEach(value -> value.sendEntityData(this));
         viewedPlayerMap.clear();
         for (EntityTracker value : trackers()) {
@@ -414,10 +450,19 @@ public final class EntityTrackerRegistry {
 
     /**
      * Despawns all trackers in the registry.
+     * Pending initialization is released, closing an empty pending registry.
+     * <pre>{@code
+     * registry.despawn();
+     * }</pre>
      *
      * @since 1.15.2
      */
     public void despawn() {
+        if (!initialSpawnPreparation.isDone() && trackerMap.isEmpty()) {
+            close(TrackerCloseReason.DESPAWN);
+            return;
+        }
+        initialSpawnPreparation.complete(null);
         for (EntityTracker value : trackers()) {
             if (!value.forRemoval()) value.despawn();
         }
@@ -589,16 +634,37 @@ public final class EntityTrackerRegistry {
 
     /**
      * Removes a player from viewing this registry.
+     * <pre>{@code
+     * registry.remove(player);
+     * }</pre>
      *
      * @param player the player
      * @return true if removed successfully
      * @since 1.15.2
      */
     public boolean remove(@NotNull PlatformPlayer player) {
+        return remove(player, true);
+    }
+
+    /**
+     * Removes this player's models, optionally restoring the source entity's data.
+     * Pairing removal already destroys the source entity on the client, so it does not
+     * require restoration packets that could reach a subsequent pairing.
+     * <pre>{@code
+     * registry.remove(player, false);
+     * }</pre>
+     *
+     * @param player the player leaving this registry
+     * @param restoreEntity whether to restore the source entity's visible data
+     * @return true if the player was registered
+     * @since 3.7.1
+     */
+    @ApiStatus.Internal
+    public boolean remove(@NotNull PlatformPlayer player, boolean restoreEntity) {
         var cache = viewedPlayerMap.remove(player.uuid());
         if (cache == null) return false;
         var handler = cache.channelHandler;
-        handler.sendEntityData(this);
+        if (restoreEntity) handler.sendEntityData(this);
         for (EntityTracker value : trackers()) {
             if (!value.forRemoval() && value.isSpawned(player)) value.remove(handler.player());
         }

@@ -22,12 +22,12 @@ import java.util.*
 object ProfileManagerImpl : ProfileManager, GlobalManager {
 
     private val gson = GsonBuilder().create()
-    private lateinit var supplier: ModelProfileSupplier
+    private lateinit var profileSupplier: ModelProfileSupplier
 
-    override fun supplier(): ModelProfileSupplier = supplier
+    override fun supplier(): ModelProfileSupplier = profileSupplier
 
     override fun supplier(supplier: ModelProfileSupplier) {
-        this.supplier = supplier
+        profileSupplier = supplier
     }
 
     override fun skin(rawTextures: String): ModelProfileSkin {
@@ -64,7 +64,10 @@ object ProfileManagerImpl : ProfileManager, GlobalManager {
     }
 
     override fun start() {
-        supplier = if (PLATFORM.nms().isProxyOnlineMode) DefaultHttpModelProfileSupplier() else HttpModelProfileSupplier()
+        // Compatibility hooks may register a supplier before this manager starts.
+        if (!::profileSupplier.isInitialized) {
+            profileSupplier = if (PLATFORM.nms().isProxyOnlineMode) DefaultHttpModelProfileSupplier() else HttpModelProfileSupplier()
+        }
     }
 
     override fun reload(pipeline: ReloadPipeline, zipper: PackZipper) {
