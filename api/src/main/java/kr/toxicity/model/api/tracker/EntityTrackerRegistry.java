@@ -86,6 +86,8 @@ public final class EntityTrackerRegistry {
 
     final Map<UUID, HitBox> hitBoxCache = new ConcurrentHashMap<>();
     private final Collection<HitBox> hitBox = Collections.unmodifiableCollection(hitBoxCache.values());
+    private final AtomicBoolean hitBoxSyncPending = new AtomicBoolean();
+    private final Runnable hitBoxSyncTask = this::syncHitBoxes;
     final Map<UUID, MountedHitBox> mountedHitBoxCache = new ConcurrentHashMap<>();
     private final Map<UUID, MountedHitBox> mountedHitBox = Collections.unmodifiableMap(mountedHitBoxCache);
 
@@ -452,6 +454,29 @@ public final class EntityTrackerRegistry {
     public void save() {
         var data = serialize();
         if (!data.isEmpty()) runSync(() -> entity.modelData(data.toString()));
+    }
+
+    // Multiple model trackers share these hitboxes. Coalesce requests until the
+    // entity's region thread has processed the latest positions.
+    void requestHitBoxSync() {
+        if (isClosed() || hitBoxCache.isEmpty() || !hitBoxSyncPending.compareAndSet(false, true)) return;
+        var scheduled = false;
+        try {
+            scheduled = entity.platform().task(hitBoxSyncTask) != null;
+        } finally {
+            if (!scheduled) hitBoxSyncPending.set(false);
+        }
+    }
+
+    private void syncHitBoxes() {
+        try {
+            if (isClosed()) return;
+            for (var hitBox : hitBoxCache.values()) {
+                hitBox.syncPosition();
+            }
+        } finally {
+            hitBoxSyncPending.set(false);
+        }
     }
 
     private void runSync(@NotNull Runnable runnable) {

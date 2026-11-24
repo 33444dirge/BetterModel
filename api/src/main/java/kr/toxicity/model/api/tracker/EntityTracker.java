@@ -155,16 +155,7 @@ public sealed class EntityTracker extends Tracker permits PlayerTracker {
             if (isClosed()) return;
             createHitBox(null, CREATE_HITBOX_PREDICATE);
         });
-        tick(_ -> {
-            var hbs = new ArrayList<>(registry.hitBoxCache.values());
-            if (!hbs.isEmpty()) {
-                registry.entity().platform().task(() -> {
-                    for (var hb : hbs) {
-                        hb.syncPosition();
-                    }
-                });
-            }
-        });
+        tick(_ -> registry.requestHitBoxSync());
         tick(_ -> updateLocation());
         tick(_ -> {
             if (damageTint.getAndDecrement() == 0) update(TrackerUpdateAction.previousTint());
