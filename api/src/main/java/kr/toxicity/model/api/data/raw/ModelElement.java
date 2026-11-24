@@ -9,10 +9,13 @@ package kr.toxicity.model.api.data.raw;
 
 import com.google.gson.JsonDeserializer;
 import com.google.gson.annotations.SerializedName;
+import kr.toxicity.model.api.bone.BoneIKChainConfig;
 import kr.toxicity.model.api.bone.BoneName;
 import kr.toxicity.model.api.data.Float2;
 import kr.toxicity.model.api.data.Float3;
 import kr.toxicity.model.api.data.blueprint.BlueprintElement;
+import kr.toxicity.model.api.data.blueprint.BlueprintFace;
+import kr.toxicity.model.api.data.blueprint.ModelBoundingBox;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -23,7 +26,7 @@ import java.util.*;
  * Represents a raw element within a model file.
  * <p>
  * This interface is a sealed type that permits specific implementations for different element types
- * found in BlockBench models, such as cubes, locators, null objects, and cameras.
+ * found in Blockbench models, such as cubes, locators, null objects, and cameras.
  * </p>
  *
  * @since 1.15.2
@@ -56,6 +59,11 @@ public sealed interface ModelElement {
      * @since 3.0.0
      */
     String MESH = "mesh";
+    /**
+     * The type identifier for a bounding box.
+     * @since 3.6.0
+     */
+    String BOUNDING_BOX = "bounding_box";
 
     /**
      * A JSON deserializer that automatically dispatches to the correct {@link ModelElement} implementation based on the "type" field.
@@ -70,6 +78,7 @@ public sealed interface ModelElement {
             case CAMERA -> context.deserialize(json, Camera.class);
             case CUBE -> context.deserialize(json, Cube.class);
             case MESH -> context.deserialize(json, Mesh.class);
+            case BOUNDING_BOX -> context.deserialize(json, BoundingBox.class);
             default -> new Unsupported(select);
         };
     };
@@ -175,6 +184,8 @@ public sealed interface ModelElement {
      * @param uuid the UUID of the null object
      * @param ikTarget the UUID of the IK target, if any
      * @param ikSource the UUID of the IK source, if any
+     * @param ikPole the UUID of the IK pole, if any
+     * @param lockIkTargetRotation whether to lock ik target's location
      * @param position the position of the null object
      * @since 1.15.2
      */
@@ -183,6 +194,8 @@ public sealed interface ModelElement {
         @NotNull String uuid,
         @Nullable @SerializedName("ik_target") String ikTarget,
         @Nullable @SerializedName("ik_source") String ikSource,
+        @Nullable @SerializedName("ik_pole") String ikPole,
+        @Nullable @SerializedName("lock_ik_target_rotation") Boolean lockIkTargetRotation,
         @Nullable Float3 position
     ) implements ModelElement {
         @Override
@@ -209,10 +222,18 @@ public sealed interface ModelElement {
                 Optional.ofNullable(ikTarget())
                     .filter(str -> !str.isEmpty())
                     .map(UUID::fromString)
-                    .orElse(null),
-                Optional.ofNullable(ikSource())
-                    .filter(str -> !str.isEmpty())
-                    .map(UUID::fromString)
+                    .map(ikTarget -> new BoneIKChainConfig(
+                        ikTarget,
+                        Optional.ofNullable(ikSource())
+                            .filter(str -> !str.isEmpty())
+                            .map(UUID::fromString)
+                            .orElse(null),
+                        Optional.ofNullable(ikPole())
+                            .filter(str -> !str.isEmpty())
+                            .map(UUID::fromString)
+                            .orElse(null),
+                        !Boolean.FALSE.equals(lockIkTargetRotation)
+                    ))
                     .orElse(null),
                 position()
             );
@@ -339,7 +360,7 @@ public sealed interface ModelElement {
                 inflate(),
                 rotation(),
                 origin(),
-                faces(),
+                faces != null ? faces.toBlueprint() : BlueprintFace.EMPTY,
                 Optional.of(lightEmission()).filter(i -> i > 0).orElse(null),
                 visibility()
             );
@@ -432,5 +453,59 @@ public sealed interface ModelElement {
          * @since 3.0.0
          */
         public record Face(@NotNull Map<String, Float2> uv, @NotNull Set<String> vertices, int texture) {}
+    }
+
+    /**
+     * Represents a standard bounding box.
+     *
+     * @param name the name of the bounding box
+     * @param uuid the UUID of the bounding box
+     * @param from the starting coordinate (min corner)
+     * @param to the ending coordinate (max corner)
+     * @since 3.6.0
+     */
+    record BoundingBox(
+        @NotNull String name,
+        @NotNull String uuid,
+        @Nullable Float3 from,
+        @Nullable Float3 to
+    ) implements ModelElement {
+
+        @Override
+        public @NotNull String type() {
+            return BOUNDING_BOX;
+        }
+
+        @Override
+        public @NotNull BlueprintElement toBlueprint() {
+            return new BlueprintElement.BoundingBox(
+                UUID.fromString(uuid()),
+                BoneName.of(name()),
+                ModelBoundingBox.of(from().toBlockScale(), to().toBlockScale()).invert()
+            );
+        }
+
+        /**
+         * Returns the starting coordinate (min corner).
+         *
+         * @return the from vector, or {@link Float3#ZERO} if not specified
+         * @since 3.6.0
+         */
+        @Override
+        public @NotNull Float3 from() {
+            return from != null ? from : Float3.ZERO;
+        }
+
+        /**
+         * Returns the ending coordinate (max corner).
+         *
+         * @return the to vector, or {@link Float3#ZERO} if not specified
+         * @since 3.6.0
+         */
+        @Override
+        public @NotNull Float3 to() {
+            return to != null ? to : Float3.ZERO;
+        }
+
     }
 }

@@ -16,8 +16,8 @@ import net.minecraft.network.FriendlyByteBuf
 import net.minecraft.network.RegistryFriendlyByteBuf
 import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket
 import net.minecraft.resources.Identifier
-import org.joml.Quaternionf
-import org.joml.Vector3f
+import org.joml.Quaternionfc
+import org.joml.Vector3fc
 
 internal class ModAnimationBundlerImpl(initialCapacity: Int) : ModAnimationBundler {
 
@@ -56,48 +56,53 @@ internal class ModAnimationBundlerImpl(initialCapacity: Int) : ModAnimationBundl
     }
 
     private val builderList = ArrayList<(FriendlyByteBuf) -> Unit>(initialCapacity)
+    private val appender = Appender()
 
     override fun send(player: PlatformPlayer) {
         player.unwarp().send(packet)
     }
 
     fun append(id: Int, scope: Appender.() -> Unit) {
-        val build = Appender(id).apply(scope).build()
+        val build = appender.init().apply(scope).build(id)
         if (build !== EMPTY_BUILD_TASK) builderList += build
     }
 
-    class Appender(
-        val entityId: Int,
-    ) {
+    class Appender {
         private var mask = 0
-        private var buildTask = EMPTY_BUILD_TASK
         private val isEmpty get() = buildTask === EMPTY_BUILD_TASK
 
-        fun appendPosition(vector: Vector3f) {
+        private var buildTask = EMPTY_BUILD_TASK
+
+        fun init() = apply {
+            mask = 0
+            buildTask = EMPTY_BUILD_TASK
+        }
+
+        fun appendPosition(vector: Vector3fc) {
             mask = mask or FIELD_TRANSLATION
             task {
-                writeFloat(it, vector.x)
-                writeFloat(it, vector.y)
-                writeFloat(it, vector.z)
+                writeFloat(it, vector.x())
+                writeFloat(it, vector.y())
+                writeFloat(it, vector.z())
             }
         }
 
-        fun appendScale(vector: Vector3f) {
+        fun appendScale(vector: Vector3fc) {
             mask = mask or FIELD_SCALE
             task {
-                writeFloat(it, vector.x)
-                writeFloat(it, vector.y)
-                writeFloat(it, vector.z)
+                writeFloat(it, vector.x())
+                writeFloat(it, vector.y())
+                writeFloat(it, vector.z())
             }
         }
 
-        fun appendRotation(quaternion: Quaternionf) {
+        fun appendRotation(quaternion: Quaternionfc) {
             mask = mask or FIELD_LEFT_ROTATION
             task {
-                writeFloat(it, quaternion.x)
-                writeFloat(it, quaternion.y)
-                writeFloat(it, quaternion.z)
-                writeFloat(it, quaternion.w)
+                writeFloat(it, quaternion.x())
+                writeFloat(it, quaternion.y())
+                writeFloat(it, quaternion.z())
+                writeFloat(it, quaternion.w())
             }
         }
 
@@ -108,7 +113,7 @@ internal class ModAnimationBundlerImpl(initialCapacity: Int) : ModAnimationBundl
             }
         }
 
-        fun build(): (FriendlyByteBuf) -> Unit {
+        fun build(entityId: Int): (FriendlyByteBuf) -> Unit {
             if (isEmpty) return EMPTY_BUILD_TASK
             val m = mask
             val t = buildTask

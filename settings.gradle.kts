@@ -11,14 +11,14 @@ pluginManagement {
 
 buildscript {
     dependencies {
-        classpath("org.jetbrains.kotlinx:kotlinx-serialization-core:1.11.0")
+        classpath("org.jetbrains.kotlinx:kotlinx-serialization-core:1.13.0")
     }
 }
 
 plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
-    id("net.fabricmc.fabric-loom-repositories") version "1.17-SNAPSHOT"
-    id("net.neoforged.moddev.repositories") version "2.0.144"
+    id("net.fabricmc.fabric-loom-repositories") version "1.19-SNAPSHOT"
+    id("net.neoforged.moddev.repositories") version "2.0.148"
 }
 
 dependencyResolutionManagement {
@@ -29,7 +29,7 @@ dependencyResolutionManagement {
         maven("https://maven.neoforged.net/releases/")
         maven("https://repo.codemc.org/repository/maven-public/")
         maven("https://repo.alessiodp.com/releases/")
-        maven("https://maven.blamejared.com/")
+        maven("https://repo.redlance.org/public")
         maven("https://repo.purpurmc.org/snapshots")
         maven("https://maven.citizensnpcs.co/repo/")
         maven("https://mvn.lumine.io/repository/maven-public/")
@@ -63,13 +63,14 @@ include(
     "purpur",
 
     //nms
-    "nms:v1_21_R3",
-    "nms:v1_21_R4",
-    "nms:v1_21_R5",
-    "nms:v1_21_R6",
-    "nms:v1_21_R7",
-    "nms:v26_R1",
-    "nms:v26_R2",
+    "nms:v1_21_R3", //1.21.4
+    "nms:v1_21_R4", //1.21.5
+    "nms:v1_21_R5", //1.21.6-1.21.8
+    "nms:v1_21_R6", //1.21.9-1.21.10
+    "nms:v1_21_R7", //1.21.11
+    "nms:v26_R1", //26.1
+    "nms:v26_R2", //26.2
+    "nms:v26_R3", //26.3
 
     //test
     "test-plugin"

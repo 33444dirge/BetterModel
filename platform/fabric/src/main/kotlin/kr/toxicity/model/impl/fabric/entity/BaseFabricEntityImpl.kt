@@ -7,6 +7,7 @@
 
 package kr.toxicity.model.impl.fabric.entity
 
+import kr.toxicity.model.api.animation.keyframe.KeyframeRuntimeContext
 import kr.toxicity.model.api.mod.entity.BaseModEntity
 import kr.toxicity.model.api.platform.PlatformEntity
 import kr.toxicity.model.api.platform.PlatformPlayer
@@ -138,4 +139,6 @@ class BaseFabricEntityImpl(private var entity: Entity) : BaseModEntity {
     }
 
     override fun uuid(): UUID = entity.uuid
+
+    override fun updateTo(context: KeyframeRuntimeContext) = registerEntityQueries(context) { entity }
 }

@@ -11,6 +11,7 @@ import kr.toxicity.model.api.BetterModel;
 import kr.toxicity.model.api.bone.BoneMovement;
 import kr.toxicity.model.api.bone.BoneTags;
 import kr.toxicity.model.api.bone.RenderedBone;
+import kr.toxicity.model.api.data.blueprint.BlueprintElement;
 import kr.toxicity.model.api.data.renderer.RenderPipeline;
 import kr.toxicity.model.api.entity.BaseEntity;
 import kr.toxicity.model.api.entity.BasePlayer;
@@ -47,10 +48,11 @@ import java.util.function.Predicate;
  *
  * @since 1.15.2
  */
-public class EntityTracker extends Tracker {
+public sealed class EntityTracker extends Tracker permits PlayerTracker {
 
     private static final BonePredicate CREATE_HITBOX_PREDICATE = BonePredicate.name("hitbox")
         .or(BonePredicate.tag(BoneTags.HITBOX))
+        .or(BonePredicate.derivedFrom(BlueprintElement.BoundingBox.class))
         .or(b -> b.getGroup().getMountController().canMount())
         .notSet();
 
@@ -59,11 +61,16 @@ public class EntityTracker extends Tracker {
     private static final BonePredicate HEAD_PREDICATE = BonePredicate.tag(BoneTags.HEAD).notSet();
     private static final BonePredicate HEAD_WITH_CHILDREN_PREDICATE = BonePredicate.tag(BoneTags.HEAD_WITH_CHILDREN).withChildren();
 
+    // Registry
     private final EntityTrackerRegistry registry;
 
+    // Tint
     private final AtomicInteger damageTintValue = new AtomicInteger(0xFF8080);
     private final AtomicLong damageTint = new AtomicLong(-1);
+
+    // Spawn Condition
     private final Set<UUID> markForSpawn = ConcurrentHashMap.newKeySet();
+    private volatile Predicate<PlatformPlayer> spawnCondition = p -> markForSpawn.isEmpty() || markForSpawn.contains(p.uuid());
 
     private final EntityBodyRotator bodyRotator;
     private EntityHideOption hideOption = EntityHideOption.DEFAULT;
@@ -71,9 +78,14 @@ public class EntityTracker extends Tracker {
     private volatile PlatformLocation location;
 
     /**
-     * Creates a new entity tracker.
+     * Creates a new entity tracker using the registry's shared Molang runtime context.
      *
-     * @param registry the entity tracker registry
+     * <pre>{@code
+     * var tracker = new EntityTracker(registry, pipeline, modifier,
+     *     entityTracker -> entityTracker.keyframeContext().set("custom_weight", 0.5F));
+     * }</pre>
+     *
+     * @param registry the entity tracker registry that supplies the shared context
      * @param pipeline the render pipeline
      * @param modifier the tracker modifier
      * @param preUpdateConsumer a consumer to run before the first update
@@ -81,7 +93,7 @@ public class EntityTracker extends Tracker {
      */
     @ApiStatus.Internal
     public EntityTracker(@NotNull EntityTrackerRegistry registry, @NotNull RenderPipeline pipeline, @NotNull TrackerModifier modifier, @NotNull Consumer<EntityTracker> preUpdateConsumer) {
-        super(pipeline, modifier);
+        super(pipeline, modifier, registry.keyframeContext);
         this.registry = registry;
         this.location = registry.entity().location();
         bodyRotator = new EntityBodyRotator(registry);
@@ -98,13 +110,13 @@ public class EntityTracker extends Tracker {
                 });
                 var baseScale = (float) (box.x() + box.z()) / 4F;
                 var posCache = new BoneMovement();
-                tick(((_, s) -> {
+                tick((set -> {
                     var wPos = bone.hitBoxPosition(posCache);
                     shadow.shadowRadius(scale.getAsFloat() * baseScale);
                     shadow.syncPotionEffect(entity);
                     shadow.syncPosition(location().add(wPos.x, wPos.y, wPos.z));
-                    shadow.sendDirtyEntityData(s.getDataBundler());
-                    shadow.sendPosition(entity, s.getTickBundler());
+                    shadow.sendDirtyEntityData(set.dataBundler());
+                    shadow.sendPosition(entity, set.tickBundler());
                 }));
                 pipeline.spawnPacketHandler(shadow::spawnWithEntityData);
                 pipeline.showPacketHandler(shadow::spawnWithEntityData);
@@ -143,7 +155,7 @@ public class EntityTracker extends Tracker {
             if (isClosed()) return;
             createHitBox(null, CREATE_HITBOX_PREDICATE);
         });
-        tick((_, _) -> {
+        tick(_ -> {
             var hbs = new ArrayList<>(registry.hitBoxCache.values());
             if (!hbs.isEmpty()) {
                 registry.entity().platform().task(() -> {
@@ -153,8 +165,8 @@ public class EntityTracker extends Tracker {
                 });
             }
         });
-        tick((_, _) -> updateLocation());
-        tick((_, _) -> {
+        tick(_ -> updateLocation());
+        tick(_ -> {
             if (damageTint.getAndDecrement() == 0) update(TrackerUpdateAction.previousTint());
         });
         rotation(bodyRotator::bodyRotation);
@@ -259,7 +271,7 @@ public class EntityTracker extends Tracker {
     @Override
     public void despawn() {
         if (sourceEntity().dead()) {
-            close(CloseReason.DESPAWN);
+            close(TrackerCloseReason.DESPAWN);
             return;
         }
         super.despawn();
@@ -369,7 +381,7 @@ public class EntityTracker extends Tracker {
      * @since 1.15.2
      */
     public boolean canBeSpawnedAt(@NotNull PlatformPlayer player) {
-        return markForSpawn.isEmpty() || markForSpawn.contains(player.uuid());
+        return spawnCondition.test(player);
     }
 
     /**
@@ -399,6 +411,25 @@ public class EntityTracker extends Tracker {
      * @since 1.15.2
      */
     public boolean canBeSaved() {
-        return pipeline.getParent().type().isCanBeSaved();
+        return renderer().type().isCanBeSaved();
+    }
+
+    /**
+     * Appends an additional spawn condition for this tracker.
+     * <p>
+     * The specified predicate is combined with the existing spawn condition using a logical AND.
+     * Only players who satisfy all chained conditions will be eligible to receive spawn packets for this model.
+     * </p>
+     *
+     * <pre>{@code
+     * tracker.spawnCondition(player -> player.hasPermission("custom.model.view"));
+     * }</pre>
+     *
+     * @param condition the spawn condition predicate to combine
+     * @throws NullPointerException if condition is null
+     * @since 3.5.0
+     */
+    public synchronized void spawnCondition(@NotNull Predicate<PlatformPlayer> condition) {
+       this.spawnCondition = this.spawnCondition.and(Objects.requireNonNull(condition));
     }
 }

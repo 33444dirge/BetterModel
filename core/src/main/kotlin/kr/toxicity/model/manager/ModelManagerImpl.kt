@@ -15,10 +15,11 @@ import kr.toxicity.model.api.bone.BoneName
 import kr.toxicity.model.api.bone.BoneTags
 import kr.toxicity.model.api.data.Float3
 import kr.toxicity.model.api.data.ModelAsset
+import kr.toxicity.model.api.data.ModelImporter
 import kr.toxicity.model.api.data.blueprint.BlueprintElement
 import kr.toxicity.model.api.data.blueprint.BlueprintJson
 import kr.toxicity.model.api.data.blueprint.ModelBlueprint
-import kr.toxicity.model.api.data.raw.ModelUV
+import kr.toxicity.model.api.data.blueprint.BlueprintUV
 import kr.toxicity.model.api.data.renderer.ModelRenderer
 import kr.toxicity.model.api.data.renderer.RendererGroup
 import kr.toxicity.model.api.event.ModelAssetsEvent
@@ -43,7 +44,10 @@ object ModelManagerImpl : ModelManager, GlobalManager {
     private val generalModelView = generalModelMap.toImmutableView()
     private val playerModelMap = addressingMapOf<String, ModelRenderer>()
     private val playerModelView = playerModelMap.toImmutableView()
-    private val modelExtensions = setOf("bbmodel", "ajmodel")
+    private val importerMap = ConcurrentHashMap(mapOf(
+        "bbmodel" to ModelImporter.BBMODEL,
+        "ajmodel" to ModelImporter.BBMODEL
+    ))
 
     internal fun stablePlayerSkinId(
         modelKey: String,
@@ -57,11 +61,15 @@ object ModelManagerImpl : ModelManager, GlobalManager {
             appendFloat(builder, value.y())
             appendFloat(builder, value.z())
         }
-        fun appendUv(builder: StringBuilder, value: ModelUV) {
+        fun appendUv(builder: StringBuilder, value: BlueprintUV?) {
+            if (value == null) {
+                builder.append("<null>;")
+                return
+            }
             appendVector(builder, Float3(value.uv().dx(), value.uv().dz(), value.uv().tx()))
             appendFloat(builder, value.uv().tz())
             builder.append(value.rotation()).append(';')
-            builder.append(value.texture()?.toString() ?: "<null>").append(';')
+            builder.append(value.texture().toString()).append(';')
         }
 
         val seed = StringBuilder("player-skin\u0000")
@@ -92,7 +100,7 @@ object ModelManagerImpl : ModelManager, GlobalManager {
         dir: File
     ): Sequence<ImportedModel> {
         val targetAssets = ModelAssetsEvent(type, dir.fileTrees().use { stream ->
-            stream.filter { it.extension.lowercase() in modelExtensions }
+            stream.filter { it.extension.lowercase() in importerMap.keys }
                 .map(ModelAsset::of)
                 .toMutableSet()
         }).apply { call() }
@@ -315,19 +323,19 @@ object ModelManagerImpl : ModelManager, GlobalManager {
                 val rawDimensions = to().minus(from())
                 val dimensions = if (slim && arm) Float3(rawDimensions.x() * 0.75F, rawDimensions.y(), rawDimensions.z()) else rawDimensions
                 val faces = faces()
-                fun kr.toxicity.model.api.data.raw.ModelUV.position() = UVPos(
+                fun BlueprintUV.position() = UVPos(
                     (minOf(uv().dx(), uv().tx()) * 4).toInt(),
                     (minOf(uv().dz(), uv().tz()) * 4).toInt()
                 )
-                fun kr.toxicity.model.api.data.raw.ModelUV.width() = (kotlin.math.abs(uv().tx() - uv().dx()) * 4).toInt()
-                fun kr.toxicity.model.api.data.raw.ModelUV.height() = (kotlin.math.abs(uv().tz() - uv().dz()) * 4).toInt()
+                fun BlueprintUV?.width() = if (this == null) 0 else (kotlin.math.abs(uv().tx() - uv().dx()) * 4).toInt()
+                fun BlueprintUV?.height() = if (this == null) 0 else (kotlin.math.abs(uv().tz() - uv().dz()) * 4).toInt()
                 val mapping = buildMap {
-                    if (faces.north().hasTexture()) put(UVFace.NORTH, faces.north().position())
-                    if (faces.south().hasTexture()) put(UVFace.SOUTH, faces.south().position())
-                    if (faces.east().hasTexture()) put(UVFace.EAST, faces.east().position())
-                    if (faces.west().hasTexture()) put(UVFace.WEST, faces.west().position())
-                    if (faces.up().hasTexture()) put(UVFace.UP, faces.up().position())
-                    if (faces.down().hasTexture()) put(UVFace.DOWN, faces.down().position())
+                    faces.north()?.let { put(UVFace.NORTH, it.position()) }
+                    faces.south()?.let { put(UVFace.SOUTH, it.position()) }
+                    faces.east()?.let { put(UVFace.EAST, it.position()) }
+                    faces.west()?.let { put(UVFace.WEST, it.position()) }
+                    faces.up()?.let { put(UVFace.UP, it.position()) }
+                    faces.down()?.let { put(UVFace.DOWN, it.position()) }
                 }
                 if (mapping.isEmpty()) return null
                 fun firstDimension(vararg values: Int) = values.firstOrNull { it > 0 } ?: 1
@@ -369,7 +377,7 @@ object ModelManagerImpl : ModelManager, GlobalManager {
                 return skinMapper(safeIdentifier, slimIdentifier)
             }
             fun BlueprintElement.Bone.parse(): RendererGroup {
-                if (this !is BlueprintElement.Group) return RendererGroup(1.0F, null, this, emptySequencedMap(), null)
+                if (this !is BlueprintElement.Group) return RendererGroup(1.0F, null, this, emptySequencedMap(), hitbox())
                 if (name().tagged(BoneTags.PLAYER_SKIN)) {
                     val directCubes = children.filterIsInstance<BlueprintElement.Cube>()
                     val staticCubes = directCubes.filter { it.rotation() == Float3.ZERO }
@@ -394,7 +402,7 @@ object ModelManagerImpl : ModelManager, GlobalManager {
                         customChildren.forEach { (name, group) -> put(name, group) }
                     }.toImmutableView()
                     val mapper = createSkinModel("${name().name()}_${uuid()}", staticCubes, origin().invertXZ(), scale(), name().name().contains("arm", true))
-                    return RendererGroup(scale(), null, this, mergedChildren, hitBox(), mapper ?: BoneItemMapper.EMPTY)
+                    return RendererGroup(scale(), null, this, mergedChildren, hitbox(), mapper ?: BoneItemMapper.EMPTY)
                 }
                 return RendererGroup(
                     scale(),
@@ -403,7 +411,7 @@ object ModelManagerImpl : ModelManager, GlobalManager {
                     },
                     this,
                     children.toBoneMap { it.parse() },
-                    hitBox(),
+                    hitbox(),
                 )
             }
             return ModelRenderer(
@@ -424,6 +432,12 @@ object ModelManagerImpl : ModelManager, GlobalManager {
         SkinManagerImpl.clearCustomModels()
         loadModels(pipeline, zipper)
     }
+
+    override fun addImporter(extension: String, importer: ModelImporter) {
+        importerMap[extension.lowercase()] = importer
+    }
+
+    override fun importer(extension: String): ModelImporter? = importerMap[extension.lowercase()]
 
     override fun model(name: String): ModelRenderer? = generalModelView[name]
     override fun models(): Collection<ModelRenderer> = generalModelView.values

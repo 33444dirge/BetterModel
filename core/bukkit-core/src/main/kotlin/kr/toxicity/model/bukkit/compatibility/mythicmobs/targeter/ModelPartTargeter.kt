@@ -7,6 +7,7 @@
 
 package kr.toxicity.model.bukkit.compatibility.mythicmobs.targeter
 
+
 import io.lumine.mythic.api.adapters.AbstractLocation
 import io.lumine.mythic.api.config.MythicLineConfig
 import io.lumine.mythic.api.skills.SkillMetadata

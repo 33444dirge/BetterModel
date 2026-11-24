@@ -611,10 +611,11 @@ object SkinManagerImpl : SkinManager, GlobalManager {
         data.floats,
         data.flags,
         emptyList(),
-        colors + data.colors
+        colors.takeIf { it.isNotEmpty() }?.let { it + data.colors } ?: data.colors
     )
 
     private fun SkinModelData.asItem(resource: ArmorResource, item: ArmorItem? = null): TransformedItemStack {
+        if (!CONFIG.module().playerArmor) return asItem()
         if (item == null) return asItem(whiteList)
         val armorData = ArmorManager.armor.resource(resource).run {
             item.trim()?.let {
@@ -631,42 +632,55 @@ object SkinManagerImpl : SkinManager, GlobalManager {
     }
 
     fun write(block: (UVByteBuilder) -> Unit) {
+        val set = mutableSetOf<UVByteBuilder>()
+
         val itemObf = PackObfuscator.order()
         val modelObf = PackObfuscator.order()
-        fun UVModel.write(armorResource: ArmorResource? = null) {
+        val textureName = PackObfuscator.order().let {
+            UVTextureName(
+                it.obfuscate(UVTextureName.DEFAULT.normalPixel),
+                it.obfuscate(UVTextureName.DEFAULT.translucentPixel)
+            )
+        }
+
+        fun UVModel.parseAsJson(armorResource: ArmorResource? = null): Collection<UVByteBuilder> {
             val model = modelName()
             packName(itemObf.obfuscate(model))
-            asJson(UVLoadContext(
-                UVTextureName.DEFAULT,
-                { modelObf.obfuscate("${model}_$it") },
-                { indexer, _, array ->
-                    armorResource?.let { ArmorManager.armor.resource(it) }?.let {
+            return asJson(UVLoadContext(
+                textureName,
+                modelObf::obfuscate
+            ) { indexer, _, array ->
+                armorResource
+                    ?.takeIf { CONFIG.module().playerArmor }
+                    ?.let { ArmorManager.armor.resource(it) }
+                    ?.let {
                         array += it.toJson()
                         indexer.shiftColor(9)
                     }
-                }
-            )).forEach(block)
+            })
         }
-        HEAD.write(ArmorResource.HELMET)
-        CHEST.write(ArmorResource.CHEST)
-        WAIST.write(ArmorResource.WAIST)
-        HIP.write(ArmorResource.HIP)
-        LEFT_LEG.write(ArmorResource.LEFT_LEG)
-        LEFT_FORELEG.write(ArmorResource.LEFT_FORELEG)
-        RIGHT_LEG.write(ArmorResource.RIGHT_LEG)
-        RIGHT_FORELEG.write(ArmorResource.RIGHT_FORELEG)
-        LEFT_ARM.write(ArmorResource.LEFT_ARM)
-        LEFT_FOREARM.write()
-        RIGHT_ARM.write(ArmorResource.RIGHT_ARM)
-        RIGHT_FOREARM.write()
-        SLIM_LEFT_ARM.write(ArmorResource.LEFT_ARM)
-        SLIM_LEFT_FOREARM.write()
-        SLIM_RIGHT_ARM.write(ArmorResource.RIGHT_ARM)
-        SLIM_RIGHT_FOREARM.write()
-        CAPE.write()
+        set += HEAD.parseAsJson(ArmorResource.HELMET)
+        set += CHEST.parseAsJson(ArmorResource.CHEST)
+        set += WAIST.parseAsJson(ArmorResource.WAIST)
+        set += HIP.parseAsJson(ArmorResource.HIP)
+        set += LEFT_LEG.parseAsJson(ArmorResource.LEFT_LEG)
+        set += LEFT_FORELEG.parseAsJson(ArmorResource.LEFT_FORELEG)
+        set += RIGHT_LEG.parseAsJson(ArmorResource.RIGHT_LEG)
+        set += RIGHT_FORELEG.parseAsJson(ArmorResource.RIGHT_FORELEG)
+        set += LEFT_ARM.parseAsJson(ArmorResource.LEFT_ARM)
+        set += LEFT_FOREARM.parseAsJson()
+        set += RIGHT_ARM.parseAsJson(ArmorResource.RIGHT_ARM)
+        set += RIGHT_FOREARM.parseAsJson()
+        set += SLIM_LEFT_ARM.parseAsJson(ArmorResource.LEFT_ARM)
+        set += SLIM_LEFT_FOREARM.parseAsJson()
+        set += SLIM_RIGHT_ARM.parseAsJson(ArmorResource.RIGHT_ARM)
+        set += SLIM_RIGHT_FOREARM.parseAsJson()
+        set += CAPE.parseAsJson()
 
-        block(UVTextureName.DEFAULT.normalPixel(uvNamespace))
-        block(UVTextureName.DEFAULT.translucentPixel(uvNamespace))
+        set += textureName.normalPixel(uvNamespace)
+        set += textureName.translucentPixel(uvNamespace)
+
+        set.forEach(block)
     }
 
     private val profileCache = Caffeine.newBuilder()

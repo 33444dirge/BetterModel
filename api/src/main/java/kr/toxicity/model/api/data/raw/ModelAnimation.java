@@ -7,11 +7,14 @@
 
 package kr.toxicity.model.api.data.raw;
 
+import com.google.gson.JsonPrimitive;
+import com.google.gson.annotations.SerializedName;
 import it.unimi.dsi.fastutil.objects.ObjectAVLTreeSet;
 import kr.toxicity.model.api.BetterModel;
 import kr.toxicity.model.api.animation.AnimationIterator;
 import kr.toxicity.model.api.animation.AnimationProgress;
-import kr.toxicity.model.api.animation.VectorPoint;
+import kr.toxicity.model.api.animation.keyframe.KeyframeDatapoint;
+import kr.toxicity.model.api.animation.keyframe.KeyframePoint;
 import kr.toxicity.model.api.data.blueprint.AnimationGenerator;
 import kr.toxicity.model.api.data.blueprint.BlueprintAnimation;
 import kr.toxicity.model.api.data.blueprint.BlueprintAnimator;
@@ -41,6 +44,7 @@ import static kr.toxicity.model.api.util.CollectionUtil.associate;
  * @param override whether this animation should override others
  * @param uuid the unique identifier of the animation
  * @param length the total length of the animation in seconds
+ * @param blendWeight the optional numeric or Molang blend weight; null defaults to one
  * @param animators a map of animators, keyed by the UUID of the bone group they affect
  * @since 1.15.2
  */
@@ -51,26 +55,45 @@ public record ModelAnimation(
     boolean override,
     @NotNull String uuid,
     float length,
+    @Nullable @SerializedName("blend_weight") JsonPrimitive blendWeight,
     @Nullable Map<String, ModelAnimator> animators
 ) {
+
+    /**
+     * Supplies model loading state and blend weight while converting animation keyframes.
+     * <pre>{@code
+     * var context = new ModelAnimation.AnimationContext(model, KeyframeDatapoint.ONE);
+     * }</pre>
+     *
+     * @param model the model loading context
+     * @param blendWeight the animation blend weight
+     * @since 3.7.0
+     */
+    public record AnimationContext(
+        @NotNull ModelLoadContext model,
+        @NotNull KeyframeDatapoint blendWeight
+    ) {}
+
     /**
      * Converts this raw animation data into a processed {@link BlueprintAnimation}.
+     * A null or blank blend weight defaults to one; other values are applied to transform keyframes.
      *
      * @param context the model loading context
-     * @param children the list of root blueprint elements
+     * @param elements the list of root blueprint elements
      * @return the blueprint animation
      * @since 1.15.2
      */
     public @NotNull BlueprintAnimation toBlueprint(
         @NotNull ModelLoadContext context,
-        @NotNull List<BlueprintElement> children
+        @NotNull List<BlueprintElement> elements
     ) {
-        var animators = AnimationGenerator.generate(length(), children, associate(
+        var ctx = new AnimationContext(context, KeyframeDatapoint.fromJson(blendWeight(), KeyframeDatapoint.ONE, context.placeholder));
+        var animators = AnimationGenerator.generate(length(), elements, associate(
             animators().entrySet().stream()
-                .filter(e -> context.availableUUIDs.contains(e.getKey()))
+                .filter(e -> ctx.model.availableUUIDs.contains(e.getKey()))
                 .map(Map.Entry::getValue)
                 .filter(ModelAnimator::isAvailable)
-                .map(a -> buildAnimationData(context, a)),
+                .map(a -> buildAnimationData(ctx, a)),
             BlueprintAnimator.AnimatorData::name
         ));
         return new BlueprintAnimation(
@@ -143,16 +166,16 @@ public record ModelAnimation(
     }
 
     @NotNull
-    private BlueprintAnimator.AnimatorData buildAnimationData(@NotNull ModelLoadContext context, @NotNull ModelAnimator animator) {
-        var position = new ArrayList<VectorPoint>();
-        var rotation = new ArrayList<VectorPoint>();
-        var scale = new ArrayList<VectorPoint>();
-        var version = context.meta.formatVersion();
+    private BlueprintAnimator.AnimatorData buildAnimationData(@NotNull AnimationContext context, @NotNull ModelAnimator animator) {
+        var position = new ArrayList<KeyframePoint>();
+        var rotation = new ArrayList<KeyframePoint>();
+        var scale = new ArrayList<KeyframePoint>();
+        var version = context.model.meta.formatVersion();
         animator.stream().filter(keyframe -> keyframe.time() <= length()).forEach(keyframe -> {
             switch (keyframe.channel()) {
-                case POSITION -> position.add(keyframe.point(context, version::convertAnimationPosition));
-                case ROTATION -> rotation.add(keyframe.point(context, version::convertAnimationRotation));
-                case SCALE -> scale.add(keyframe.point(context, version::convertAnimationScale));
+                case POSITION -> position.add(keyframe.point(context, version.positionAxis()));
+                case ROTATION -> rotation.add(keyframe.point(context, version.rotationAxis()));
+                case SCALE -> scale.add(keyframe.point(context, version.scaleAxis()));
             }
         });
         return new BlueprintAnimator.AnimatorData(

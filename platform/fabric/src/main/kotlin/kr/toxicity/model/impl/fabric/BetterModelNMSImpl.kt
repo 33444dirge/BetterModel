@@ -124,7 +124,7 @@ class BetterModelNMSImpl : NMS {
             val packet = if (registry.hideOption(channel.uuid()).equipment) target.toEmptyEquipmentPacket() else target.toEquipmentPacket()
             packet?.let { list += it }
         }
-        list.send(channel.player())
+        list.send(channel)
     }
 
     override fun createHitBox(
@@ -143,7 +143,7 @@ class BetterModelNMSImpl : NMS {
         )
     }
 
-    override fun version(): NMSVersion = NMSVersion.V26_R2
+    override fun version(): NMSVersion = NMSVersion.V26_R3
 
     override fun adapt(entity: PlatformEntity): BaseEntity = BaseFabricEntityImpl(entity.unwarp())
 

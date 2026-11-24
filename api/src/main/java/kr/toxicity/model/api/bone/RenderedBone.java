@@ -13,6 +13,7 @@ import it.unimi.dsi.fastutil.objects.ObjectLinkedOpenHashSet;
 import it.unimi.dsi.fastutil.objects.ObjectSortedSets;
 import kr.toxicity.model.api.BetterModel;
 import kr.toxicity.model.api.animation.*;
+import kr.toxicity.model.api.animation.keyframe.KeyframeRuntimeContext;
 import kr.toxicity.model.api.data.blueprint.BlueprintAnimation;
 import kr.toxicity.model.api.data.blueprint.BlueprintElement;
 import kr.toxicity.model.api.data.blueprint.ModelBoundingBox;
@@ -40,7 +41,10 @@ import org.jetbrains.annotations.Unmodifiable;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
-import java.util.*;
+import java.util.Arrays;
+import java.util.Map;
+import java.util.SequencedSet;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.*;
@@ -176,9 +180,9 @@ public final class RenderedBone implements BoneEventHandler {
 
     public void locator(@NotNull BoneIKSolver solver) {
         if (getGroup().getParent() instanceof BlueprintElement.NullObject nullObject) {
-            var ikTarget = nullObject.ikTarget();
-            if (ikTarget == null) return;
-            solver.addLocator(nullObject.ikSource(), ikTarget, this);
+            var ikChainConfig = nullObject.config();
+            if (ikChainConfig == null) return;
+            solver.addLocator(ikChainConfig, this);
         }
     }
 
@@ -387,8 +391,8 @@ public final class RenderedBone implements BoneEventHandler {
         if (d != null) d.sendEntityData(!d.invisible(), bundler);
     }
 
-    public void sendTransformation(@Nullable UUID uuid, @NotNull AnimationBundler bundler) {
-        state(uuid).sendTransformation(bundler);
+    public void sendTransformation(@NotNull KeyframeRuntimeContext context, @Nullable UUID uuid, @NotNull AnimationBundler bundler) {
+        state(uuid).sendTransformation(context, bundler);
     }
 
     public void forceTransformation(@NotNull PacketBundler bundler) {
@@ -545,6 +549,29 @@ public final class RenderedBone implements BoneEventHandler {
         if (nametag != null) nametag.remove(bundler);
     }
 
+    /**
+     * Tests whether the parent element is derived from (an instance of) the specified class type.
+     *
+     * <pre>{@code
+     * // Instead of:
+     * boolean isDerived = getGroup().getParent() instanceof BlueprintElement.class;
+     *
+     * // You can write:
+     * boolean isDerived = isDerivedFrom(BlueprintElement.class);
+     * }</pre>
+     *
+     * @param elementClass the expected class type
+     * @return {@code true} if the parent is an instance of {@code elementClass}; {@code false} otherwise
+     * @since 3.6.0
+     */
+    public boolean isDerivedFrom(@NotNull Class<? extends BlueprintElement> elementClass) {
+        return elementClass.isInstance(getGroup().getParent());
+    }
+
+    public @NotNull Vector3f rootPosition() {
+        return root.group.getPosition();
+    }
+
     public @NotNull Stream<RenderedBone> flatten() {
         return flattenBones().stream();
     }
@@ -591,9 +618,7 @@ public final class RenderedBone implements BoneEventHandler {
 
     @NotNull
     public Vector3f hitBoxPosition(@NotNull BoneMovement cache) {
-        var box = getGroup().getHitBox();
-        if (box != null) return worldPosition(new BonePosition(EMPTY_VECTOR, group.getHitBoxPoint(), null), cache);
-        return worldPosition(cache);
+        return worldPosition(group.getHitboxPosition(), cache);
     }
 
     public float hitBoxScale() {
@@ -637,14 +662,14 @@ public final class RenderedBone implements BoneEventHandler {
             );
         }
 
-        @NotNull BoneMovement after() {
+        @NotNull BoneMovement after(@NotNull KeyframeRuntimeContext context) {
             if (!updateAfter.compareAndSet(true, false)) return after;
             var keyframe = state.afterKeyframe(AnimationProgress.EMPTY);
             var preventModifierUpdate = interpolationDuration() < 1;
-            var def = keyframe.animate(defaultFrame, after);
+            var def = keyframe.animate(context, defaultFrame, after);
             var parent = transformParent;
             if (parent != null) {
-                var p = parent.state(uuid).after();
+                var p = parent.state(uuid).after(context);
                 MathUtil.fma(
                         def.position().rotate(p.rotation()),
                         p.scale(),
@@ -693,9 +718,9 @@ public final class RenderedBone implements BoneEventHandler {
             return Math.round(frame + MathUtil.FLOAT_COMPARISON_EPSILON);
         }
 
-        private void sendTransformation(@NotNull AnimationBundler bundler) {
+        private void sendTransformation(@NotNull KeyframeRuntimeContext context, @NotNull AnimationBundler bundler) {
             if (!updateCurrent.compareAndSet(true, false)) return;
-            var after = after();
+            var after = after(context);
             var movement = lock.accessToWriteLock(() -> current.set(after));
             if (transformer == null) return;
             var mul = scale.getAsFloat();
@@ -719,7 +744,7 @@ public final class RenderedBone implements BoneEventHandler {
 
         private @NotNull Vector3f worldPosition(@NotNull BonePosition position, @NotNull BoneMovement cache) {
             var progress = progress();
-            var interpolated = lock.accessToReadLock(() -> before.lerp(current, progress, cache));
+            var interpolated = lock.accessToReadLock(() -> updateCurrent.get() ? cache.set(current) : before.lerp(current, progress, cache));
             return MathUtil.fma(
                     interpolated.position()
                         .add(itemStack.offset())

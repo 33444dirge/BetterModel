@@ -7,6 +7,7 @@
 
 package kr.toxicity.model.bukkit.compatibility.mythicmobs.condition
 
+
 import io.lumine.mythic.api.adapters.AbstractEntity
 import io.lumine.mythic.api.config.MythicLineConfig
 import io.lumine.mythic.api.skills.conditions.IEntityCondition

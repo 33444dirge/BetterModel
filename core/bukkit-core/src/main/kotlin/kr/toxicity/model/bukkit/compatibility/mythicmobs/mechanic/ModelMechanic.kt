@@ -7,6 +7,7 @@
 
 package kr.toxicity.model.bukkit.compatibility.mythicmobs.mechanic
 
+
 import io.lumine.mythic.api.config.MythicLineConfig
 import io.lumine.mythic.api.skills.INoTargetSkill
 import io.lumine.mythic.api.skills.SkillMetadata
@@ -20,7 +21,7 @@ import kr.toxicity.model.bukkit.compatibility.mythicmobs.toPlaceholderBoolean
 import kr.toxicity.model.bukkit.compatibility.mythicmobs.toPlaceholderFloat
 import kr.toxicity.model.bukkit.util.wrap
 
-class ModelMechanic(mlc: MythicLineConfig) : AbstractSkillMechanic(mlc), INoTargetSkill {
+internal class ModelMechanic(mlc: MythicLineConfig) : AbstractSkillMechanic(mlc), INoTargetSkill {
 
     private val mid = mlc.modelPlaceholder
     private val s = mlc.toPlaceholderFloat(arrayOf("scale", "s"), 1F)

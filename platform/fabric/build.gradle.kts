@@ -197,8 +197,10 @@ modrinth {
     dependencies {
         required.version("fabric-api", libs.versions.fabric.api.get())
         required.version("fabric-language-kotlin", libs.versions.fabric.language.kotlin.get())
+        required.version("polymer", libs.versions.polymer.get())
 //        optional.project(
 //            "skinsrestorer"
 //        )
     }
+    environment = "server_only"
 }

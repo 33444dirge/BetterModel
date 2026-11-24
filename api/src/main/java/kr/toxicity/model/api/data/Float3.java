@@ -182,6 +182,22 @@ public record Float3(
     }
 
     /**
+     * Checks whether these coordinates fit the bounds of a legacy item model element.
+     * <pre>{@code
+     * boolean fits = Float3.CENTER.isWithinElementBounds();
+     * }</pre>
+     *
+     * @return true if each coordinate is between -16 and 32, inclusive
+     * @since 3.7.0
+     */
+    public boolean isWithinElementBounds() {
+        // Legacy item models reject element coordinates outside this range.
+        return x >= -16F && x <= 32F
+            && y >= -16F && y <= 32F
+            && z >= -16F && z <= 32F;
+    }
+
+    /**
      * Converts floats to vector.
      * @return vector
      */

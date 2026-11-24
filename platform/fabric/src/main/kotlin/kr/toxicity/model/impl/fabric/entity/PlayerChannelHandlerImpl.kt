@@ -10,6 +10,7 @@ package kr.toxicity.model.impl.fabric.entity
 import io.netty.channel.ChannelDuplexHandler
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelPromise
+import it.unimi.dsi.fastutil.ints.IntOpenHashSet
 import kr.toxicity.model.api.BetterModel
 import kr.toxicity.model.api.entity.BasePlayer
 import kr.toxicity.model.api.mod.BetterModelMod
@@ -43,6 +44,9 @@ class PlayerChannelHandlerImpl(
     private val uuid = player.uuid
 
     private val basePlayer = PLATFORM.nms().adapt(connection.wrap())
+    // Follow the client's entity types until removal is written, even after world lookup stops finding them.
+    private val hitBoxIds = IntOpenHashSet()
+    private var dimension = connection.player.level().dimension()
 
     init {
         val pipeline = connection.player.connection.connection.channel.pipeline()
@@ -52,6 +56,7 @@ class PlayerChannelHandlerImpl(
     override fun close() {
         val channel = connection.player.connection.connection.channel
         channel.eventLoop().submit {
+            hitBoxIds.clear()
             channel.pipeline().remove(INJECT_NAME)
         }
     }
@@ -67,13 +72,9 @@ class PlayerChannelHandlerImpl(
 
     private fun Entity.toRegistry() = BetterModel.registryOrNull(uuid)
 
-    private inline fun Int.toRegistry(ifHitBox: (Entity) -> Unit = {}) =
-        (EntityTrackerRegistry.registry(this) ?: getPlayerEntity(this)?.let {
-            if (it is HitBox) ifHitBox(it)
-            it.toRegistry()
-        })?.takeIf {
-            it.isSpawned(player.uuid)
-        }
+    private fun Int.toRegistry() = (EntityTrackerRegistry.registry(this) ?: getPlayerEntity(this)?.toRegistry())?.takeIf {
+        it.isSpawned(player.uuid)
+    }
 
     override fun sendEntityData(registry: EntityTrackerRegistry) {
         val handle = registry.entity().handle() as? Entity ?: return
@@ -114,8 +115,12 @@ class PlayerChannelHandlerImpl(
             }
 
             is ClientboundAddEntityPacket -> {
+                hitBoxIds.remove(id)
                 val entity = getPlayerEntity(id) ?: return this
-                if (entity is HitBox) return entity.toFakeAddPacket()
+                if (entity is HitBox) {
+                    hitBoxIds.add(id)
+                    return entity.toFakeAddPacket()
+                }
                 val wrap = entity.wrap()
                 BetterModel.registry(wrap).ifPresent {
                     wrap.taskLater(1) {
@@ -127,10 +132,8 @@ class PlayerChannelHandlerImpl(
             is ClientboundRemoveEntitiesPacket -> {
                 entityIds
                     .asSequence()
-                    .mapNotNull map@{
-                        it.toRegistry {
-                            return@map null
-                        }
+                    .mapNotNull {
+                        if (hitBoxIds.remove(it)) null else it.toRegistry()
                     }
                     .forEach {
                         it.remove()
@@ -146,27 +149,34 @@ class PlayerChannelHandlerImpl(
                 }
             }
 
-            is ClientboundUpdateAttributesPacket if getPlayerEntity(entityId) is HitBox -> return null
-            is ClientboundSetEntityDataPacket -> id.toRegistry {
-                return ClientboundSetEntityDataPacket(id, hitBoxData)
-            }?.let { registry ->
-                return toRegistryDataPacket(uuid, registry)
-            }
-
-            is ClientboundSetEquipmentPacket -> entity.toRegistry {
-                return null
-            }?.let { registry ->
-                if (registry.hideOption(uuid).equipment()) {
-                    (registry.entity().handle() as? LivingEntity)
-                        ?.toEquipmentPacket { ItemStack.EMPTY }
-                        ?.let { packet ->
-                            return packet
-                        }
+            is ClientboundUpdateAttributesPacket if hitBoxIds.contains(entityId) -> return null
+            is ClientboundSetEntityDataPacket -> {
+                if (hitBoxIds.contains(id)) return ClientboundSetEntityDataPacket(id, hitBoxData)
+                id.toRegistry()?.let { registry ->
+                    return toRegistryDataPacket(uuid, registry)
                 }
             }
 
-            is ClientboundRespawnPacket -> playerModel?.let {
-                bundlerOf(it.mountPacket(connection.player)).send(connection.wrap())
+            is ClientboundSetEquipmentPacket -> {
+                if (hitBoxIds.contains(entity)) return null
+                entity.toRegistry()?.let { registry ->
+                    if (registry.hideOption(uuid).equipment()) {
+                        (registry.entity().handle() as? LivingEntity)
+                            ?.toEquipmentPacket { ItemStack.EMPTY }
+                            ?.let { packet ->
+                                return packet
+                            }
+                    }
+                }
+            }
+
+            is ClientboundRespawnPacket -> {
+                val nextDimension = commonPlayerSpawnInfo().dimension()
+                if (dimension != nextDimension) hitBoxIds.clear()
+                dimension = nextDimension
+                playerModel?.let {
+                    bundlerOf(it.mountPacket(connection.player)).send(connection.wrap())
+                }
             }
 
             is ClientboundContainerSetSlotPacket if isEquipment(connection.player) && playerModel?.hideOption(uuid)?.equipment() == true -> {
@@ -189,7 +199,9 @@ class PlayerChannelHandlerImpl(
     }
 
     override fun write(ctx: ChannelHandlerContext, msg: Any, promise: ChannelPromise) {
-        super.write(ctx, if (msg is Packet<*>) msg.handle() ?: return else msg, promise)
+        val packet = if (msg is Packet<*>) msg.handle() else msg
+        if (packet == null) promise.trySuccess()
+        else super.write(ctx, packet, promise)
     }
 
     override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {

@@ -18,14 +18,14 @@
 ![](https://github.com/user-attachments/assets/ff515577-6a72-48ba-9943-81f00dddb375)
 
 * * *
-<sub>(In BlockBench / In Minecraft)</sub>
+<sub>(In Blockbench / In Minecraft)</sub>
 
 # ✨ Introduction
 
-**BetterModel** is a server-based engine that provides runtime [BlockBench](https://www.blockbench.net/) model rendering & animating for Minecraft Java Edition.
+**BetterModel** is a server-based engine that provides runtime [Blockbench](https://www.blockbench.net/) model rendering & animating for Minecraft Java Edition.
 
 - Built on the `item-display` packet.
-- Implements **essential BlockBench elements**, including `cubes`, `meshes`, `null objects`, and `locators`.
+- Implements **essential Blockbench elements**, including `cubes`, `meshes`, `null objects`, and `locators`.
 - Support for **model animations**, `Molang` expressions, and **IK** (Inverse Kinematics) rigging.
 - Supports **player skin models** and **custom armor**.
 - **Automated resource pack generation** with **zero reliance on core shaders**.
@@ -56,7 +56,7 @@ BetterModel aims to be a reliable engine that provides stable, high-quality anim
 
 ## 🛠️ Build info
 
-[![](https://img.shields.io/badge/minecraft-1.21.4%7E26.2.x-8FCA5C)](https://www.minecraft.net/en-us/download/server)
+[![](https://img.shields.io/badge/minecraft-1.21.4%7E26.3.x-8FCA5C)](https://www.minecraft.net/en-us/download/server)
 [![](https://img.shields.io/badge/java-25%7E-ED8B00)](https://adoptium.net/)
 
 #### Build
@@ -76,7 +76,7 @@ BetterModel aims to be a reliable engine that provides stable, high-quality anim
 - [DynamicUV](https://github.com/toxicity188/DynamicUV): player model
 - [ArmorModel](https://github.com/toxicity188/ArmorModel): armor in player model
 - [java-mesh](https://github.com/toxicity188/java-mesh): mesh rendering
-- [molang-compiler](https://github.com/Ocelot5836/molang-compiler): compiling and evaluating molang expression
+- [mochafloats](https://github.com/PlayerAnimationLibrary/mochafloats): compiling and evaluating molang expression
 - [libby](https://github.com/AlessioDP/libby): runtime library downloader
 
 #### Tested Bukkit Server Platform
@@ -92,7 +92,7 @@ BetterModel aims to be a reliable engine that provides stable, high-quality anim
 
 ## 💻 API
 
-[![](https://cdn.jsdelivr.net/npm/@intergrav/devins-badges@3/assets/cozy/available/maven-central_vector.svg)](https://central.sonatype.com/artifact/io.github.toxicity188/bettermodel)
+[![](https://cdn.jsdelivr.net/npm/@intergrav/devins-badges@3/assets/cozy/available/maven-central_vector.svg)](https://central.sonatype.com/artifact/io.github.toxicity188/bettermodel-api)
 
 > [!NOTE]\
 > For more detailed API specifications, please refer to our [GitHub Wiki](https://github.com/toxicity188/BetterModel/wiki/API-example).
@@ -104,7 +104,7 @@ BetterModel aims to be a reliable engine that provides stable, high-quality anim
 ```kotlin
 repositories {
     mavenCentral()
-    maven("https://maven.blamejared.com/") // For transitive dependency in bettermodel-fabric
+    maven("https://repo.redlance.org/public") // For transitive dependency in bettermodel-fabric
     maven("https://maven.nucleoid.xyz/") // For transitive dependency in bettermodel-fabric
 }
 
@@ -123,7 +123,7 @@ repositories {
             password = YOUR_GITHUB_TOKEN
         }
     }
-    maven("https://maven.blamejared.com/") // For transitive dependency in bettermodel-fabric
+    maven("https://repo.redlance.org/public") // For transitive dependency in bettermodel-fabric
     maven("https://maven.nucleoid.xyz/") // For transitive dependency in bettermodel-fabric
 }
 
@@ -141,7 +141,7 @@ dependencies {
 ```groovy
 repositories {
     mavenCentral()
-    maven 'https://maven.blamejared.com/' // For transitive dependency in bettermodel-fabric
+    maven 'https://repo.redlance.org/public' // For transitive dependency in bettermodel-fabric
     maven 'https://maven.nucleoid.xyz/' // For transitive dependency in bettermodel-fabric
 }
 
@@ -161,7 +161,7 @@ repositories {
             password = YOUR_GITHUB_TOKEN
         }
     }
-    maven 'https://maven.blamejared.com/' // For transitive dependency in bettermodel-fabric
+    maven 'https://repo.redlance.org/public' // For transitive dependency in bettermodel-fabric
     maven 'https://maven.nucleoid.xyz/' // For transitive dependency in bettermodel-fabric
 }
 

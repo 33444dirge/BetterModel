@@ -9,6 +9,7 @@ package kr.toxicity.model.impl.fabric.entity
 
 import kr.toxicity.model.api.nms.AnimationBundler
 import kr.toxicity.model.api.util.MathUtil
+import kr.toxicity.model.impl.fabric.network.ModAnimationBundlerImpl
 import kr.toxicity.model.impl.fabric.network.plusAssign
 import kr.toxicity.model.mixin.DisplayAccessor
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket
@@ -69,13 +70,15 @@ class TransformationData {
     fun packDirty(entityId: Int, dest: AnimationBundler) {
         val i = translation.cleanIndex + scale.cleanIndex + rotation.cleanIndex
         if (i == 0) return
-        dest.standard += ClientboundSetEntityDataPacket(entityId, buildList(i + 2) {
-            add(INTERPOLATION_DELAY_VALUE)
-            translation.value?.let { add(it) }
-            rotation.value?.let { add(it) }
-            scale.value?.let { add(it) }
-            add(durationDataValue)
-        })
+        (dest.mod as ModAnimationBundlerImpl).append(entityId) {
+            dest.standard += ClientboundSetEntityDataPacket(entityId, buildList(i + 2) {
+                add(INTERPOLATION_DELAY_VALUE)
+                translation.value?.let { appendPosition(it.value); add(it) }
+                rotation.value?.let { appendRotation(it.value); add(it) }
+                scale.value?.let { appendScale(it.value); add(it) }
+                appendDuration(duration); add(durationDataValue)
+            })
+        }
     }
 
     fun transform(
@@ -101,12 +104,11 @@ class TransformationData {
     }
 
     private class Item<T : Any>(
-        initialValue: T,
+        private val initialValue: T,
         private val accessor: EntityDataAccessor<T>,
         private val dirtyChecker: (T, T) -> Boolean,
         private val setter: (T, T) -> Unit
     ) {
-        private val _value: T = initialValue
         private var _dirty = false
 
         val dirty
@@ -127,16 +129,16 @@ class TransformationData {
             get() = SynchedEntityData.DataValue(
                 accessor.id,
                 accessor.serializer,
-                _value
+                initialValue
             )
 
         fun set(other: T) {
-            if (dirtyChecker(_value, other)) {
+            if (dirtyChecker(initialValue, other)) {
                 return
             }
 
             _dirty = true
-            setter(_value, other)
+            setter(initialValue, other)
         }
     }
 

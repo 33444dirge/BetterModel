@@ -11,8 +11,8 @@ import kr.toxicity.model.api.bone.BoneName
 import kr.toxicity.model.api.data.Float3
 import kr.toxicity.model.api.data.Float4
 import kr.toxicity.model.api.data.blueprint.BlueprintElement
-import kr.toxicity.model.api.data.raw.ModelFace
-import kr.toxicity.model.api.data.raw.ModelUV
+import kr.toxicity.model.api.data.blueprint.BlueprintFace
+import kr.toxicity.model.api.data.blueprint.BlueprintUV
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -38,13 +38,13 @@ class ModelManagerImplTest {
         0F,
         Float3(15F, 0F, 0F),
         Float3.ZERO,
-        ModelFace(
-            ModelUV(uv, 0, null),
-            ModelUV(uv, 0, null),
-            ModelUV(uv, 0, null),
-            ModelUV(uv, 0, null),
-            ModelUV(uv, 0, null),
-            ModelUV(uv, 0, null)
+        BlueprintFace(
+            BlueprintUV("north", uv, 0, 0),
+            BlueprintUV("south", uv, 0, 0),
+            BlueprintUV("east", uv, 0, 0),
+            BlueprintUV("west", uv, 0, 0),
+            BlueprintUV("up", uv, 0, 0),
+            BlueprintUV("down", uv, 0, 0)
         ),
         null,
         true

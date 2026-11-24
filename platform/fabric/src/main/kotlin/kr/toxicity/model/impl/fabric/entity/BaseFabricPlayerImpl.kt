@@ -7,6 +7,7 @@
 
 package kr.toxicity.model.impl.fabric.entity
 
+import kr.toxicity.model.api.animation.keyframe.KeyframeRuntimeContext
 import kr.toxicity.model.api.mod.entity.BaseModEntity
 import kr.toxicity.model.api.mod.entity.BaseModPlayer
 import kr.toxicity.model.api.nms.Profiled
@@ -47,4 +48,6 @@ class BaseFabricPlayerImpl(
         if (handle.zMovement() < 0) yaw *= -1
         return Mth.wrapDegrees(handle.yHeadRot + yaw)
     }
+
+    override fun updateTo(context: KeyframeRuntimeContext) = registerPlayerQueries(context) { connection.player }
 }

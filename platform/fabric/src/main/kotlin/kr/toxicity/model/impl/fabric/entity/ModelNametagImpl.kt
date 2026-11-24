@@ -31,7 +31,7 @@ import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket
 import net.minecraft.world.entity.Display
 import net.minecraft.world.entity.EntityTypes
-import net.minecraft.world.entity.PositionMoveRotation
+import net.minecraft.world.entity.PositionPath
 import net.minecraft.world.phys.Vec3
 import org.joml.Vector3f
 import java.util.*
@@ -77,7 +77,7 @@ class ModelNametagImpl(
 
     override fun send(player: PlatformPlayer) {
         if (display.text == Component.empty()) return
-        val hb = bone.group.hitBoxPoint
+        val hb = bone.group.hitboxPosition.localOffset
         val pos = bone.worldPosition(BonePosition(emptyVector, hb, player.uuid()), posCache)
         display.snapTo(Vec3(
             location.x() + pos.x,
@@ -93,7 +93,7 @@ class ModelNametagImpl(
                 }
             )
             inPoint -> bundlerOfNotNull(
-                ClientboundEntityPositionSyncPacket(display.id, PositionMoveRotation.of(display), false),
+                ClientboundEntityPositionSyncPacket(display.id, PositionPath.of(display.position()), display.yRot, display.xRot, false),
                 display.entityData.packDirty()?.let {
                     ClientboundSetEntityDataPacket(display.id, it)
                 }

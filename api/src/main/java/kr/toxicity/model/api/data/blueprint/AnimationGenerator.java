@@ -7,8 +7,11 @@
 
 package kr.toxicity.model.api.data.blueprint;
 
-import it.unimi.dsi.fastutil.floats.*;
-import kr.toxicity.model.api.animation.VectorPoint;
+import it.unimi.dsi.fastutil.floats.FloatAVLTreeSet;
+import it.unimi.dsi.fastutil.floats.FloatArrayList;
+import it.unimi.dsi.fastutil.floats.FloatSortedSet;
+import kr.toxicity.model.api.animation.AnimationKeyframe;
+import kr.toxicity.model.api.animation.keyframe.KeyframePoint;
 import kr.toxicity.model.api.bone.BoneName;
 import kr.toxicity.model.api.util.InterpolationUtil;
 import kr.toxicity.model.api.util.MathUtil;
@@ -57,7 +60,7 @@ public final class AnimationGenerator {
     ) {
         var floatSet = mapFloat(pointMap.values()
             .stream()
-            .flatMap(BlueprintAnimator.AnimatorData::allPoints), VectorPoint::time, () -> new FloatAVLTreeSet(MathUtil.FRAME_COMPARATOR));
+            .flatMap(BlueprintAnimator.AnimatorData::allPoints), KeyframePoint::time, () -> new FloatAVLTreeSet(MathUtil.FRAME_COMPARATOR));
         floatSet.add(0F);
         floatSet.add(length);
         var generator = new AnimationGenerator(g -> pointMap.get(g.name()), children);
@@ -70,7 +73,7 @@ public final class AnimationGenerator {
                 .parallel()
                 .map(v -> new BlueprintAnimator(
                     v.name(),
-                    InterpolationUtil.buildAnimation(
+                    AnimationKeyframe.build(
                         v.position(),
                         v.rotation(),
                         v.scale(),
@@ -115,7 +118,7 @@ public final class AnimationGenerator {
                     return new RotationVector(
                         t,
                         list.doubleStream()
-                            .mapToObj(value -> interpolator.build((float) value).vector())
+                            .mapToObj(value -> interpolator.build((float) value).vector().eval())
                             .toList()
                     );
                 })
@@ -171,7 +174,7 @@ public final class AnimationGenerator {
             });
     }
 
-    private void interpolateStep(@NotNull FloatSortedSet floats, @NotNull List<VectorPoint> points) {
+    private void interpolateStep(@NotNull FloatSortedSet floats, @NotNull List<KeyframePoint> points) {
         if (points.size() < 2) return;
         for (int i = 1; i < points.size(); i++) {
             var before = points.get(i - 1);

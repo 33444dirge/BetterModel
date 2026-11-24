@@ -8,7 +8,6 @@
 package kr.toxicity.model.bukkit.nms.v1_21_R5
 
 import io.papermc.paper.event.entity.EntityKnockbackEvent
-import kr.toxicity.model.api.BetterModel
 import kr.toxicity.model.api.bone.BoneMovement
 import kr.toxicity.model.api.bone.RenderedBone
 import kr.toxicity.model.api.bukkit.BetterModelBukkit
@@ -32,6 +31,7 @@ import net.minecraft.world.damagesource.DamageSource
 import net.minecraft.world.effect.MobEffectInstance
 import net.minecraft.world.entity.*
 import net.minecraft.world.entity.ai.attributes.Attributes
+import net.minecraft.world.entity.decoration.ArmorStand
 import net.minecraft.world.entity.player.Player
 import net.minecraft.world.entity.projectile.Projectile
 import net.minecraft.world.entity.projectile.ProjectileDeflection
@@ -48,7 +48,6 @@ import org.bukkit.craftbukkit.entity.CraftLivingEntity
 import org.bukkit.event.entity.CreatureSpawnEvent
 import org.bukkit.event.entity.EntityPotionEffectEvent
 import org.bukkit.event.entity.EntityRemoveEvent
-import org.bukkit.plugin.Plugin
 import org.joml.Vector3f
 import java.util.*
 
@@ -58,7 +57,7 @@ internal class HitBoxImpl(
     private var listener: HitBoxListener,
     private val delegate: Entity,
     private var mountController: MountController
-) : AbstractHitBox(delegate.level()) {
+) : ArmorStand(EntityType.ARMOR_STAND, delegate.level()), HitBox {
     private val posCache = BoneMovement()
     private var initialized = false
     private var jumpDelay = 0
@@ -350,18 +349,22 @@ internal class HitBoxImpl(
     }
 
     override fun hide(player: PlatformPlayer) {
-        val plugin = BetterModel.platform() as Plugin
-        player.unwarp().run {
-            hideEntity(plugin, bukkitEntity)
-            hideEntity(plugin, interaction.bukkitEntity)
+        context(PLUGIN) {
+            val unwrap = player.unwarp()
+            bukkitEntity.runInRegion {
+                bukkitEntity.hide(unwrap)
+                interaction.bukkitEntity.hide(unwrap)
+            }
         }
     }
 
     override fun show(player: PlatformPlayer) {
-        val plugin = BetterModel.platform() as Plugin
-        player.unwarp().run {
-            showEntity(plugin, bukkitEntity)
-            showEntity(plugin, interaction.bukkitEntity)
+        context(PLUGIN) {
+            val unwrap = player.unwarp()
+            bukkitEntity.runInRegion {
+                bukkitEntity.show(unwrap)
+                interaction.bukkitEntity.show(unwrap)
+            }
         }
     }
 
@@ -389,8 +392,7 @@ internal class HitBoxImpl(
     }
 
     override fun addEffect(effectInstance: MobEffectInstance, entity: Entity?): Boolean {
-        if (entity === delegate) return false
-        return ifLivingEntity { addEffect(effectInstance, entity) } == true
+        return entity !== delegate && ifLivingEntity { addEffect(effectInstance, entity) } == true
     }
 
     override fun addEffect(
@@ -398,8 +400,7 @@ internal class HitBoxImpl(
         entity: Entity?,
         cause: EntityPotionEffectEvent.Cause
     ): Boolean {
-        if (entity === delegate) return false
-        return ifLivingEntity { addEffect(effectInstance, entity, cause) } == true
+        return entity !== delegate && ifLivingEntity { addEffect(effectInstance, entity, cause) } == true
     }
 
     override fun addEffect(
@@ -408,8 +409,7 @@ internal class HitBoxImpl(
         cause: EntityPotionEffectEvent.Cause,
         fireEvent: Boolean
     ): Boolean {
-        if (entity === delegate) return false
-        return ifLivingEntity { addEffect(effectInstance, entity, cause, fireEvent) } == true
+        return entity !== delegate && ifLivingEntity { addEffect(effectInstance, entity, cause, fireEvent) } == true
     }
 
     override fun hurtServer(world: ServerLevel, source: DamageSource, amount: Float): Boolean {
@@ -417,8 +417,7 @@ internal class HitBoxImpl(
         if (source.entity === controllingPassenger && !mountController.canBeDamagedByRider()) return false
         val ds = ModelDamageSourceImpl(source)
         val event = HitBoxDamagedEvent(craftEntity, ds, amount)
-        if (!listener.handle(event)) return false
-        return ifLivingEntity { hurtServer(world, source, event.damage) } == true
+        return listener.handle(event) && ifLivingEntity { hurtServer(world, source, event.damage) } == true
     }
 
     override fun deflection(projectile: Projectile): ProjectileDeflection {
