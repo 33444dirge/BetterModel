@@ -14,7 +14,7 @@ import io.lumine.mythic.api.skills.SkillResult
 import kr.toxicity.model.bukkit.compatibility.mythicmobs.*
 import kr.toxicity.model.util.boneName
 
-class ChangeParentMechanic(mlc: MythicLineConfig) : AbstractSkillMechanic(mlc), INoTargetSkill {
+internal class ChangeParentMechanic(mlc: MythicLineConfig) : AbstractSkillMechanic(mlc), INoTargetSkill {
     private val model = mlc.modelPlaceholder
     private val parent = mlc.toPlaceholderString(arrayOf("parent", "parentid")) { it?.boneName }
     private val child = mlc.toPlaceholderString(arrayOf("child", "childid")) { it?.boneName }

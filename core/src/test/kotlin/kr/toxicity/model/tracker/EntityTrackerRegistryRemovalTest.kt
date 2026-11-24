@@ -123,6 +123,15 @@ class EntityTrackerRegistryRemovalTest {
     }
 
     @Test
+    fun `reloading releases pending initialization`() {
+        val preparation = CompletableFuture<Void>()
+        registry.initialSpawnPreparation(preparation)
+        registry.reload()
+        assertTrue(preparation.isDone)
+        assertFalse(registry.isClosed)
+    }
+
+    @Test
     fun `initialization installed after close is released`() {
         registry.close(TrackerCloseReason.DESPAWN)
         val preparation = CompletableFuture<Void>()

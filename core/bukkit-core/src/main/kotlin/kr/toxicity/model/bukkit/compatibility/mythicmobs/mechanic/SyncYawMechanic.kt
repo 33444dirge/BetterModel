@@ -13,7 +13,7 @@ import io.lumine.mythic.api.skills.SkillMetadata
 import io.lumine.mythic.api.skills.SkillResult
 import kr.toxicity.model.bukkit.compatibility.mythicmobs.*
 
-class SyncYawMechanic(mlc: MythicLineConfig) : AbstractSkillMechanic(mlc), INoTargetSkill {
+internal class SyncYawMechanic(mlc: MythicLineConfig) : AbstractSkillMechanic(mlc), INoTargetSkill {
     private val model = mlc.modelPlaceholder
 
     override fun cast(p0: SkillMetadata): SkillResult {

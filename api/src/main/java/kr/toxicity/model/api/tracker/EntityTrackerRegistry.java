@@ -418,12 +418,16 @@ public final class EntityTrackerRegistry {
     }
 
     /**
-     * Reloads the registry, refreshing all trackers.
+     * Reloads the registry, releasing pending initial preparation and refreshing all trackers.
+     * <pre>{@code
+     * registry.reload();
+     * }</pre>
      *
      * @since 1.15.2
      */
     public void reload() {
         closed.set(true);
+        initialSpawnPreparation.complete(null);
         var data = new ArrayList<TrackerData>(trackerMap.size());
         for (EntityTracker value : trackers()) {
             value.close();

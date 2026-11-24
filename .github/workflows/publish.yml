@@ -28,6 +28,15 @@ jobs:
         run: chmod +x gradlew
       - name: Build all file
         run: ./gradlew build --stacktrace
+      - name: Upload plugin JARs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: BetterModel-${{ github.sha }}
+          path: |
+            build/libs/*-paper.jar
+            build/libs/*-spigot.jar
+          if-no-files-found: warn
       - name: Publish to Modrinth
         run: ./gradlew modrinth --stacktrace
       - name: Publish to Hangar

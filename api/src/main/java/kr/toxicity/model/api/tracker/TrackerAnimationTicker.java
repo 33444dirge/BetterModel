@@ -66,10 +66,12 @@ final class TrackerAnimationTicker {
      * @since 3.7.0
      */
     void tick() {
-        if (!pipeline.tick()) return;
-        recalculateViewedPlayers();
-        if (viewedPlayers.isEmpty()) return;
-        sendAnimation();
+        if (pipeline.tick()) {
+            recalculateViewedPlayers();
+            if (!viewedPlayers.isEmpty()) sendAnimation();
+        }
+        // Player overrides have their own clocks, including when all viewers use them.
+        if (!perPlayerAnimationCache.isEmpty()) perPlayerAnimationCache.values().forEach(PerPlayerCache::send);
     }
 
     /**
@@ -117,8 +119,6 @@ final class TrackerAnimationTicker {
             viewedPlayers.forEach(animationBundler::send);
             animationBundler = pipeline.createAnimationBundler();
         }
-        if (perPlayerAnimationCache.isEmpty()) return;
-        perPlayerAnimationCache.values().forEach(PerPlayerCache::send);
     }
 
     @RequiredArgsConstructor

@@ -23,11 +23,14 @@ public interface SkinData {
      * <p>
      * The identifier is supplied by BetterModel while importing a group tagged with
      * {@code pskin}. Unknown identifiers return an empty item.
+     * </p>
+     * <pre>{@code
+     * skinData.customModel("player_plushie_head");
+     * }</pre>
      *
      * @param identifier imported custom skin model identifier
      * @return an item containing this skin applied to the requested model
      * @since 3.2.1
-     * @example {@code skinData.customModel("player_plushie_head");}
      */
     default @NotNull TransformedItemStack customModel(@NotNull String identifier) {
         return TransformedItemStack.empty();

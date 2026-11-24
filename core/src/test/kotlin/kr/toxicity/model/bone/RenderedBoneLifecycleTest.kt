@@ -9,6 +9,8 @@ package kr.toxicity.model.bone
 
 import kr.toxicity.model.api.BetterModel
 import kr.toxicity.model.api.BetterModelPlatform
+import kr.toxicity.model.api.BetterModelConfig
+import kr.toxicity.model.api.animation.keyframe.KeyframeRuntimeContext
 import kr.toxicity.model.api.animation.AnimationIterator
 import kr.toxicity.model.api.animation.AnimationModifier
 import kr.toxicity.model.api.animation.AnimationOverrideState
@@ -26,6 +28,7 @@ import kr.toxicity.model.api.data.renderer.RenderPipeline
 import kr.toxicity.model.api.data.renderer.RendererGroup
 import kr.toxicity.model.api.manager.PlayerManager
 import kr.toxicity.model.api.nms.NMS
+import kr.toxicity.model.api.nms.ModAnimationBundler
 import kr.toxicity.model.api.nms.PacketBundler
 import kr.toxicity.model.api.nms.PlayerChannelHandler
 import kr.toxicity.model.api.platform.PlatformItemStack
@@ -71,8 +74,11 @@ class RenderedBoneLifecycleTest {
         val nms = Proxy.newProxyInstance(
             NMS::class.java.classLoader, arrayOf(NMS::class.java)
         ) { _, method, _ ->
-            check(method.name == "createBundler") { "Unexpected NMS call: ${method.name}" }
-            emptyBundler
+            when (method.name) {
+                "createBundler" -> emptyBundler
+                "createModAnimationBuilder" -> unused<ModAnimationBundler>()
+                else -> error("Unexpected NMS call: ${method.name}")
+            }
         } as NMS
         val playerManager = Proxy.newProxyInstance(
             PlayerManager::class.java.classLoader, arrayOf(PlayerManager::class.java)
@@ -80,6 +86,12 @@ class RenderedBoneLifecycleTest {
             check(method.name == "player") { "Unexpected manager call: ${method.name}" }
             channels[args[0]]
         } as PlayerManager
+        val config = Proxy.newProxyInstance(
+            BetterModelConfig::class.java.classLoader, arrayOf(BetterModelConfig::class.java)
+        ) { _, method, _ ->
+            check(method.name == "packetBundlingSize")
+            0
+        } as BetterModelConfig
         BetterModel.register(Proxy.newProxyInstance(
             BetterModelPlatform::class.java.classLoader, arrayOf(BetterModelPlatform::class.java)
         ) { _, method, _ ->
@@ -87,6 +99,7 @@ class RenderedBoneLifecycleTest {
                 "adapter" -> adapter
                 "nms" -> nms
                 "manager" -> playerManager
+                "config" -> config
                 else -> error("Unexpected platform call: ${method.name}")
             }
         } as BetterModelPlatform)
@@ -95,6 +108,39 @@ class RenderedBoneLifecycleTest {
     @AfterTest
     fun restorePlatform() {
         platformField.set(null, previousPlatform)
+    }
+
+    @Test
+    fun `targeted animations complete when every viewer has an override`() {
+        targetedAnimationCompletes(withGlobalViewer = false)
+    }
+
+    @Test
+    fun `targeted animations complete when the global pose has stopped updating`() {
+        targetedAnimationCompletes(withGlobalViewer = true)
+    }
+
+    private fun targetedAnimationCompletes(withGlobalViewer: Boolean) {
+        val bone = bone()
+        val pipeline = pipeline(bone)
+        val player = player()
+        spawn(pipeline, player)
+        if (withGlobalViewer) spawn(pipeline, player())
+        val tickerType = Class.forName("kr.toxicity.model.api.tracker.TrackerAnimationTicker")
+        val ticker = tickerType.getDeclaredConstructor(RenderPipeline::class.java, KeyframeRuntimeContext::class.java)
+            .apply { isAccessible = true }.newInstance(pipeline, KeyframeRuntimeContext.empty())
+        val add = tickerType.getDeclaredMethod("countAdd", UUID::class.java, java.util.function.Consumer::class.java)
+            .apply { isAccessible = true }
+        pipeline.eventDispatcher().handleStateCreate { _, uuid ->
+            add.invoke(ticker, uuid, java.util.function.Consumer<PlayerChannelHandler> {})
+        }
+        assertTrue(bone.addAnimation(
+            AnimationOverrideState.MATCHED, animation(AnimationIterator.Type.PLAY_ONCE),
+            AnimationModifier.builder().player(player).build()
+        ) {})
+        val tick = tickerType.getDeclaredMethod("tick").apply { isAccessible = true }
+        repeat(100) { tick.invoke(ticker) }
+        assertTrue(playerStates(bone).isEmpty(), "The tracker worker must advance player overrides independently of the global pose")
     }
 
     @Test
@@ -259,8 +305,11 @@ class RenderedBoneLifecycleTest {
         channels[player.uuid()] = Proxy.newProxyInstance(
             PlayerChannelHandler::class.java.classLoader, arrayOf(PlayerChannelHandler::class.java)
         ) { _, method, _ ->
-            check(method.name == "player") { "Unexpected channel call: ${method.name}" }
-            player
+            when (method.name) {
+                "player" -> player
+                "uuid" -> player.uuid()
+                else -> error("Unexpected channel call: ${method.name}")
+            }
         } as PlayerChannelHandler
         assertTrue(pipeline.spawn(player, emptyBundler) {})
     }

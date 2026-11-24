@@ -19,7 +19,7 @@ import kr.toxicity.model.util.toComponent
 import kr.toxicity.model.util.warn
 
 /** Compatibility for disabling ModelEngine culling on BetterModel effects. */
-class CullConfigMechanic(mlc: MythicLineConfig) : AbstractSkillMechanic(mlc), INoTargetSkill {
+internal class CullConfigMechanic(mlc: MythicLineConfig) : AbstractSkillMechanic(mlc), INoTargetSkill {
 
     private val model = mlc.modelPlaceholder
     private val visual = mlc.toNullablePlaceholderBoolean(arrayOf("viewcull", "vc"))
