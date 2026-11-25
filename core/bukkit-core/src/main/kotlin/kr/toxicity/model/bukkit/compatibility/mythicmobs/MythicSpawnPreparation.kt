@@ -40,8 +40,10 @@ import org.bukkit.entity.Entity
 import org.bukkit.Bukkit
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
+import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
 import org.bukkit.event.server.PluginDisableEvent
+import org.bukkit.event.world.WorldUnloadEvent
 import java.util.UUID
 import java.util.Queue
 import java.util.concurrent.ConcurrentHashMap
@@ -228,6 +230,19 @@ internal class MythicSpawnPreparation : Listener {
 
     @EventHandler
     fun MythicPreReloadEvent.resetPreparation() = reset()
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun WorldUnloadEvent.releasePreparation() {
+        if (!BetterModelBukkit.IS_FOLIA) return
+        val unloadedWorld = world
+        // An unloading Folia world can stop ticking without retiring its queued entity tasks.
+        Bukkit.getGlobalRegionScheduler().run(PLUGIN) {
+            if (Bukkit.getWorld(unloadedWorld.name) === unloadedWorld) return@run
+            pending.values.forEach { state ->
+                if (state.entity.world === unloadedWorld) state.complete()
+            }
+        }
+    }
 
     @EventHandler
     fun MythicReloadCompleteEvent.allowPreparation() {
